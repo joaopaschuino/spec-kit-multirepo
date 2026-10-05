@@ -62,10 +62,13 @@ def central(tmp_path, fake_agent, monkeypatch):
     root = write_workspace(
         tmp_path,
         members=[
-            {"id": "s3", "path": "repo-s3"},
+            {"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"},
             {"id": "lambda", "path": "repo-lambda", "depends_on": ["s3"]},
         ],
     )
+    constitutions = root / "constitutions"
+    constitutions.mkdir()
+    (constitutions / "s3.md").write_text("# s3 type rules\n", encoding="utf-8")
     make_member(tmp_path, "s3", with_specify=True)
     lambda_repo = make_member(tmp_path, "lambda", with_specify=True)
     # Members use the claude integration key; the executable is overridden
@@ -133,7 +136,11 @@ def test_install_run_and_resume(central):
     assert result.exit_code == 1, result.output  # failed run exits non-zero
 
     log = read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))
-    assert [r["args"].split(" ")[-1] for r in log] == ["tasks/s3.md", "tasks/lambda.md"]
+    assert len(log) == 2
+    # s3 carries its workspace constitution; lambda has none configured.
+    assert "tasks/s3.md" in log[0]["args"]
+    assert "constitutions/s3.md" in log[0]["args"]
+    assert log[1]["args"].endswith("tasks/lambda.md")
     s3_call = log[0]
     assert s3_call["cwd"] == str(root / "repo-s3")
     # claude is a skills integration: the extension command's native
@@ -165,10 +172,11 @@ def test_install_run_and_resume(central):
     # The resumed dispatch re-ran s3 too (idempotent no-op expectation) and
     # then lambda.
     log = read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))
-    assert [r["args"].split(" ")[-1] for r in log] == [
-        "tasks/s3.md", "tasks/lambda.md",  # first run
-        "tasks/s3.md", "tasks/lambda.md",  # resume re-executed the step
-    ]
+    assert len(log) == 4
+    for s3_call, lambda_call in ((log[0], log[1]), (log[2], log[3])):
+        assert "tasks/s3.md" in s3_call["args"]
+        assert "constitutions/s3.md" in s3_call["args"]
+        assert lambda_call["args"].endswith("tasks/lambda.md")
 
 
 def test_extension_installs_and_registers_commands(tmp_path, fake_agent, monkeypatch):

@@ -52,16 +52,16 @@ In each **member repository**:
 
 ```sh
 specify extension add multi-repo --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.1.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.2.0.zip
 ```
 
 In the **central specs repository**, the two commands above plus:
 
 ```sh
 specify workflow step add multi-repo-implement --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.1.0/step-multi-repo-implement-v0.1.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.2.0/step-multi-repo-implement-v0.2.0.zip
 specify workflow add multi-repo --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.1.0/workflow/multi-repo/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.2.0/workflow/multi-repo/workflow.yml
 ```
 
 (The step install asks an interactive trust confirmation before downloading —
@@ -71,7 +71,7 @@ default-deny; answer `yes`.)
 
 ```sh
 ./install.sh central /path/to/central-repo                # local (--dev) mode
-./install.sh member  /path/to/member-repo --release v0.1.0 # release mode
+./install.sh member  /path/to/member-repo --release v0.2.0 # release mode
 ```
 
 `install.sh` runs, respectively:
@@ -101,6 +101,7 @@ workspace:
 members:
   - id: lambda
     path: ../repo-lambda
+    constitution: constitutions/lambda.md  # shared by every lambda member
     integration: claude        # optional; default: member's integration.json
     tasks_file: tasks/lambda.md  # optional; default: tasks/<id>.md
     depends_on: []               # members that must complete first
@@ -109,9 +110,11 @@ members:
 ```
 
 Validation: unique slug ids, `path` must be a Spec Kit project at dispatch
-time, `depends_on` must reference known members, and the graph must be
-acyclic. Waves are computed per feature over the participating subset only —
-a member not in the feature never blocks its dependents.
+time, `depends_on` must reference known members, the graph must be acyclic,
+and a member's `constitution` file must exist in the central repository
+(fail-fast before any dispatch). Waves are computed per feature over the
+participating subset only — a member not in the feature never blocks its
+dependents.
 
 ## The workflow step — `multi-repo-implement`
 
@@ -138,7 +141,34 @@ Dispatch details: each member's agent CLI runs headless (`claude -p …`,
 dispatch: `SPECIFY_FEATURE_DIRECTORY=<central feature dir>` and
 `SPECIFY_FEATURE_NO_PERSIST=1` (unless `persist_feature: true`). The member's
 tasks file is passed as the command argument, not as an environment variable,
-so concurrent waves cannot race on it.
+so concurrent waves cannot race on it — and when the member declares a
+`constitution`, its absolute path is appended as a second argument.
+
+## Constitutions
+
+Governance lives in the central repository and is consumed live at dispatch
+time — one source of truth, no copies to synchronize. The member's
+implementation command reads every layer that exists; when layers conflict,
+**the most restrictive rule wins** (each layer narrows the one above, never
+loosens it):
+
+1. **Workspace** — `central/.specify/memory/constitution.md`: rules true for
+   the whole platform (edited with `/speckit.constitution` in the central
+   repo, as in any Spec Kit project)
+2. **Member/type** — a shared file declared per member in `workspace.yml`
+   (`constitution: constitutions/lambda.md`). Keep it next to the manifest —
+   for example `central/constitutions/{lambda,glue,sqs,step-functions}.md` —
+   and put in it only rules true for the whole type (runtime, naming,
+   mandatory checks). Several members of the same type point at the same
+   file, so ten Lambda repos read one Lambda constitution
+3. **Local** — `member/.specify/memory/constitution.md`: repo-specific
+   exceptions only
+
+The orchestrator validates configured constitution files before dispatching
+(a missing file fails the run with the path in the error) and hands each
+member its constitution path as part of the dispatched command, so concurrent
+members each receive their own. Later steps of the member's completion report
+name which layers applied and any rule that overrode a task.
 
 Resume semantics: the engine re-executes the step from the top on
 `workflow resume`. That is safe because re-dispatching a member whose tasks
@@ -192,9 +222,10 @@ an upstream RFC.
 
 ## Limitations (v1)
 
-- No cascading constitutions (global → repo-type → local): copy or submodule
-  the workspace-level constitution manually; member prompts read both the
-  member's and the central `.specify/memory/constitution.md` when present
+- Constitution layers are prompt-level governance (like the Spec Kit core):
+  enforcement happens through the implementing agent, not a mechanical
+  validator; member-local constitutions live in the member repo by design
+  (only workspace and type layers are centralized)
 - No automatic cross-repo contract synchronization: follow the
   [contract-driven development guide](https://github.com/github/spec-kit/blob/main/docs/guides/contract-driven-development.md)
   and keep contracts under the feature's `contracts/` directory

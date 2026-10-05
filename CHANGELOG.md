@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-04
+
+### Added
+
+- Optional per-member `constitution` field in the workspace manifest: a
+  shared governance file stored in the central repository (for example
+  `constitutions/lambda.md`). Every member pointing at the same file shares
+  it, so repositories of the same type read one constitution instead of
+  keeping copies
+- Three-layer governance in member implementation: workspace constitution
+  (central `.specify/memory/constitution.md`) → member/type constitution
+  (the shared file above) → member-local constitution, with the most
+  restrictive rule winning; the member's completion report names the layers
+  that applied
+- Fail-fast validation: a dispatch run fails before any dispatch when a
+  member's configured constitution file does not exist in the central
+  repository
+- The member's constitution path travels in the dispatched command
+  arguments (safe under concurrent waves) and is recorded in the per-member
+  step results
+
+### Upgrade
+
+- Reinstall the extension and the custom workflow step (both changed); the
+  workflow definition is unchanged
+
 ## [0.1.0] - 2026-10-04
 
 ### Added

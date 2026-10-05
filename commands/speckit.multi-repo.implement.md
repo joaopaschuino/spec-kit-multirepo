@@ -12,7 +12,7 @@ scripts:
 $ARGUMENTS
 ```
 
-You **MUST** consider the user input before proceeding (if not empty). When this command is dispatched by the multi-repo orchestrator, `$ARGUMENTS` is the member's tasks file path **relative to the feature directory** (for example `tasks/lambda.md`).
+You **MUST** consider the user input before proceeding (if not empty). When this command is dispatched by the multi-repo orchestrator, `$ARGUMENTS` contains the member's tasks file path **relative to the feature directory** (for example `tasks/lambda.md`) and, when the member declares a workspace constitution, that constitution file's **absolute path** as a second token.
 
 ## Purpose
 
@@ -73,42 +73,49 @@ This repository is a **member** of a multi-repo workspace. The active feature is
    - **REQUIRED**: Read `FEATURE_DIR/TASKS_FILE` for this member's task list (the ONLY task list you execute)
    - **IF EXISTS**: Read `FEATURE_DIR/plan.md` for tech stack, architecture, and file structure
    - **IF EXISTS**: Read `FEATURE_DIR/data-model.md`, `FEATURE_DIR/contracts/`, `FEATURE_DIR/research.md`, `FEATURE_DIR/quickstart.md`
-   - **IF EXISTS**: Read this repository's `.specify/memory/constitution.md` for local governance constraints
-   - **IF EXISTS**: Read the central repository's `.specify/memory/constitution.md` (central root is two levels above FEATURE_DIR) for workspace-wide constraints; when both exist and conflict, the more restrictive rule wins
 
-4. **Checklist handling** (if `FEATURE_DIR/checklists/` exists):
+4. **Governance — read every layer that exists; when layers conflict, the most restrictive rule wins.** Each layer narrows the one above it, never loosens it:
+   1. *Workspace*: `<central-root>/.specify/memory/constitution.md` — the central root is two levels above FEATURE_DIR
+   2. *Member/type*: the second token of `$ARGUMENTS`, when present — the absolute path to this member's shared constitution file in the central repository (for example `constitutions/lambda.md`, shared by every member of the same type). When absent, look up this repository's entry in `<central-root>/.specify/workspace.yml` (the member whose `path` resolves to the current working directory) and read its `constitution` file relative to the central root, if set
+   3. *Local*: this repository's `.specify/memory/constitution.md`, if it exists
+
+   Type constitutions hold only rules true for the whole type (runtime, naming, mandatory checks); repo-specific exceptions belong in the local layer.
+
+5. **Checklist handling** (if `FEATURE_DIR/checklists/` exists):
    - Build the same status table the standard implement command uses (per checklist: total / checked / unchecked)
    - **If you are running headless** (dispatched non-interactively, no user to answer): display the table, note any unchecked items in your final report, and **continue** — do not block
    - **If you are running interactively**: follow the standard behavior — STOP and ask before proceeding when any checklist has unchecked items
    - Never modify checklist files or markers
 
-5. **Project setup verification**: create or verify ignore files for this repository's detected stack (a git repo needs `.gitignore`; Dockerfile → `.dockerignore`; and so on for eslint/prettier/terraform as applicable). If an ignore file already exists, append only missing essential patterns. Use the common patterns for the languages and tooling found in this repo.
+6. **Project setup verification**: create or verify ignore files for this repository's detected stack (a git repo needs `.gitignore`; Dockerfile → `.dockerignore`; and so on for eslint/prettier/terraform as applicable). If an ignore file already exists, append only missing essential patterns. Use the common patterns for the languages and tooling found in this repo.
 
-6. Parse `FEATURE_DIR/TASKS_FILE` structure and extract:
+7. Parse `FEATURE_DIR/TASKS_FILE` structure and extract:
    - Task phases and their ordering (Setup, Tests, Core, Integration, Polish or as written)
    - Task dependencies: sequential vs parallel markers `[P]`
    - Task details: ID, description, file paths
 
-7. Execute implementation following the member task file:
+8. Execute implementation following the member task file:
    - Phase-by-phase execution: complete each phase before moving to the next
    - Respect dependencies: sequential tasks in order; `[P]` tasks may be treated as parallelizable
    - Follow TDD where the task list pairs test and implementation tasks
    - Write code, configuration, and documentation **in this repository** (the current working directory)
    - When a task depends on a cross-repo contract (event schema, bucket policy, API shape), treat `FEATURE_DIR/contracts/` as the authority; do not invent divergent copies
+   - Where a governance rule constrains a task (layer 1–4 above), the rule wins over the task text
 
-8. Progress tracking and error handling:
+9. Progress tracking and error handling:
    - Report progress after each completed task
    - Halt execution if any non-parallel task fails; for `[P]` tasks continue with the successful ones and report failures
    - **IMPORTANT**: For completed tasks, mark the task as `[X]` in `FEATURE_DIR/TASKS_FILE` (the file lives in the central specs repository — write your checkbox updates there, not to a local copy)
 
-9. Validation:
-   - Run this repository's tests and linters; fix what the implementation broke
-   - Verify the implementation matches `FEATURE_DIR/spec.md` for this member's scope
+10. Validation:
+    - Run this repository's tests and linters; fix what the implementation broke
+    - Verify the implementation matches `FEATURE_DIR/spec.md` for this member's scope
 
-10. Completion report:
+11. Completion report:
     - Tasks completed / total from `FEATURE_DIR/TASKS_FILE`
     - Files created or modified in this repository
     - Test and lint results
+    - Governance layers applied (which of the three existed), and any rule that overrode a task
     - Any cross-repo contract consumed, and any checklist items left unchecked
 
 ## Mandatory Post-Execution Hooks

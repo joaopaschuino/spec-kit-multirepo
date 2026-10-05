@@ -40,7 +40,7 @@ WORKSPACE_SCHEMA_VERSION = "1.0"
 _MEMBER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 _ALLOWED_WORKSPACE_KEYS = {"id", "name"}
-_ALLOWED_MEMBER_KEYS = {"id", "path", "integration", "tasks_file", "depends_on"}
+_ALLOWED_MEMBER_KEYS = {"id", "path", "integration", "tasks_file", "depends_on", "constitution"}
 
 
 class WorkspaceError(ValueError):
@@ -59,6 +59,11 @@ class Member:
     integration: str | None = None
     #: Member tasks file, relative to a feature directory.
     tasks_file: str = ""
+    #: Optional member (or repo-type) constitution file, resolved against the
+    #: central project root. Shared by every member pointing at the same
+    #: file, so repositories of the same type (lambda, glue, ...) read one
+    #: shared governance document instead of copies.
+    constitution: Path | None = None
     #: Member ids whose dispatch must complete before this member's.
     depends_on: tuple[str, ...] = ()
 
@@ -219,12 +224,28 @@ def load_workspace(project_root: Path) -> Workspace:
                 "'depends_on' must be a list of member ids or omitted."
             )
 
+        constitution_raw = entry.get("constitution")
+        if constitution_raw is None:
+            constitution: Path | None = None
+        elif isinstance(constitution_raw, str) and constitution_raw.strip():
+            constitution = Path(constitution_raw.strip())
+            if not constitution.is_absolute():
+                constitution = root / constitution
+            constitution = constitution.resolve()
+        else:
+            raise WorkspaceError(
+                f"Workspace manifest {manifest_path}: member {member_id!r} "
+                "'constitution' must be a non-empty path (relative to the "
+                "workspace root) or omitted."
+            )
+
         members.append(
             Member(
                 id=member_id,
                 path=path,
                 integration=integration.strip() if integration else None,
                 tasks_file=tasks_file,
+                constitution=constitution,
                 depends_on=depends_on,
             )
         )

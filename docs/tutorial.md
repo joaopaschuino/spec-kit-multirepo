@@ -69,11 +69,31 @@ members:
     path: ../repo-s3
   - id: lambda
     path: ../repo-lambda
+    constitution: constitutions/lambda.md  # shared governance, live in central
     depends_on: [s3]     # s3 (the producer) dispatches first
 ```
 
 `path` is relative to the central root — sibling checkouts in this tutorial.
 A git-submodule layout works too (point `path` at the member checkout).
+
+Then create the shared constitution for the lambda type in the central repo
+(keep the workspace-level one at `central/.specify/memory/constitution.md`,
+edited with `/speckit.constitution` as usual):
+
+```sh
+mkdir -p central/constitutions
+cat > central/constitutions/lambda.md <<'EOF'
+# Lambda type constitution
+- Runtime and naming conventions every Lambda member must follow
+- Every handler validates its event against the feature contracts/ first
+EOF
+```
+
+At dispatch time each member's agent reads, in order, the workspace
+constitution → this type constitution (its path is validated and passed by
+the orchestrator) → the member's own `.specify/memory/constitution.md`, with
+the most restrictive rule winning. A configured but missing constitution
+file fails the run before any dispatch.
 
 ## 3. Specify, plan, and generate tasks (central)
 

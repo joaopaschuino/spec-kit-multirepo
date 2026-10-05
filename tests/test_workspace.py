@@ -105,6 +105,14 @@ def test_load_workspace_missing_manifest(tmp_path, workspace_module):
             {
                 "schema_version": "1.0",
                 "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "constitution": 42}],
+            },
+            "'constitution' must be",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
                 "members": [{"id": "a", "path": "a", "tasks_file": 42}],
             },
             "'tasks_file' must be a non-empty string",
@@ -172,6 +180,40 @@ def test_workspace_waves_end_to_end(tmp_path, workspace_module):
         ["glue", "lambda"],
         ["step-functions"],
     ]
+
+
+def test_load_workspace_constitution_resolution(tmp_path, workspace_module):
+    central = write_workspace(
+        tmp_path / "central",
+        members=[
+            {"id": "lambda", "path": "../repo-lambda", "constitution": "constitutions/lambda.md"},
+            {"id": "s3", "path": "../repo-s3", "constitution": str(tmp_path / "abs-type.md")},
+            {"id": "glue", "path": "../repo-glue"},
+        ],
+    )
+    make_member(tmp_path, "lambda")
+    make_member(tmp_path, "s3")
+    make_member(tmp_path, "glue")
+
+    ws = workspace_module.load_workspace(central)
+
+    lam = ws.member("lambda")
+    assert lam.constitution == (tmp_path / "central" / "constitutions" / "lambda.md").resolve()
+    s3 = ws.member("s3")
+    assert s3.constitution == (tmp_path / "abs-type.md").resolve()  # absolute kept
+    glue = ws.member("glue")
+    assert glue.constitution is None  # optional
+
+    # Two members of the same type share one file by pointing at it.
+    shared = write_workspace(
+        tmp_path / "central2",
+        members=[
+            {"id": "lambda-a", "path": "../repo-lambda-a", "constitution": "constitutions/lambda.md"},
+            {"id": "lambda-b", "path": "../repo-lambda-b", "constitution": "constitutions/lambda.md"},
+        ],
+    )
+    ws2 = workspace_module.load_workspace(shared)
+    assert ws2.member("lambda-a").constitution == ws2.member("lambda-b").constitution
 
 
 def test_read_feature_directory_priority(tmp_path, workspace_module, monkeypatch):

@@ -338,6 +338,96 @@ def test_execute_missing_workspace(tmp_path, step_module, monkeypatch, dispatch_
     assert "workspace manifest" in (result.error or "").lower()
 
 
+def test_execute_member_constitution_in_args(tmp_path, step_module, monkeypatch, dispatch_calls):
+    """Configured constitutions ride in the dispatch args, per member."""
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"},
+            {"id": "lambda", "path": "repo-lambda", "depends_on": ["s3"]},
+        ],
+    )
+    make_member(tmp_path, "s3")
+    make_member(tmp_path, "lambda")
+    make_feature(central, task_files={"s3": "", "lambda": ""})
+    constitution = central / "constitutions" / "s3.md"
+    constitution.parent.mkdir()
+    constitution.write_text("# s3 type rules\n", encoding="utf-8")
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    by_args = {c["member"]: c for c in dispatch_calls}
+    assert by_args[S3]["args"] == f"tasks/s3.md {constitution}"
+    assert by_args[LAMBDA]["args"] == "tasks/lambda.md"  # no constitution configured
+    per_repo = {r["repo"]: r for r in result.output["results"]}
+    assert per_repo["s3"]["constitution"] == str(constitution)
+    assert per_repo["lambda"]["constitution"] is None
+
+
+def test_execute_parallel_members_get_their_own_constitution(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """Concurrent waves each receive their own path (args, not shared env)."""
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"},
+            {"id": "glue", "path": "repo-glue", "constitution": "constitutions/glue.md"},
+        ],
+    )
+    make_member(tmp_path, "s3")
+    make_member(tmp_path, "glue")
+    make_feature(central, task_files={"s3": "", "glue": ""})
+    constitutions = central / "constitutions"
+    constitutions.mkdir()
+    (constitutions / "s3.md").write_text("# s3\n", encoding="utf-8")
+    (constitutions / "glue.md").write_text("# glue\n", encoding="utf-8")
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {
+            "id": "i",
+            "type": "multi-repo-implement",
+            "feature": "specs/001-demo",
+            "max_concurrency": 2,
+        },
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    by_args = {c["member"]: c for c in dispatch_calls}
+    assert by_args[S3]["args"].endswith("constitutions/s3.md")
+    assert by_args[GLUE]["args"].endswith("constitutions/glue.md")
+
+
+def test_execute_missing_constitution_blocks_dispatch(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    central = write_workspace(
+        tmp_path,
+        members=[{"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"}],
+    )
+    make_member(tmp_path, "s3")
+    make_feature(central, task_files={"s3": ""})
+    # No constitutions/ directory: the configured file does not exist.
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.FAILED
+    assert dispatch_calls == []  # fail fast before any dispatch
+    assert "constitution file not found" in (result.error or "")
+    assert "s3" in (result.error or "")
+
+
 def test_validate_reports_config_errors(step_module):
     errors = step_module.MultiRepoImplementStep().validate(
         {

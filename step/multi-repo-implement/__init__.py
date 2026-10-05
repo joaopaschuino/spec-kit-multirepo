@@ -20,6 +20,12 @@ Configuration (all fields optional)::
       persist_feature: false            # write feature.json in members
       stop_on_failure: true             # halt before the next wave on failure
 
+Members may also declare a shared ``constitution`` file (stored in the
+central repository, e.g. ``constitutions/lambda.md``) in
+``.specify/workspace.yml``; it is validated to exist before any dispatch and
+its absolute path is appended to the dispatched command arguments so the
+member's agent reads it as the member/type governance layer.
+
 The step is stateless/thread-safe (shared instance): all per-run state comes
 from ``config``/``context``, and process-wide environment variables are set
 once before any dispatch and restored in a ``finally`` block.
@@ -316,6 +322,13 @@ class MultiRepoImplementStep(StepBase):
                     "run 'specify init' in the member repository first"
                 )
                 continue
+            if member.constitution is not None and not member.constitution.is_file():
+                errors[member.id] = (
+                    f"workspace constitution file not found: {member.constitution} "
+                    "(the member's 'constitution' in workspace.yml must point to "
+                    "an existing file in the central repository)"
+                )
+                continue
 
             key = member.integration
             if not key:
@@ -393,6 +406,7 @@ class MultiRepoImplementStep(StepBase):
             "wave": wave_index,
             "tasks_file": member.tasks_file,
             "integration": key or None,
+            "constitution": str(member.constitution) if member.constitution else None,
             "status": "failed",
             "exit_code": None,
         }
@@ -407,13 +421,20 @@ class MultiRepoImplementStep(StepBase):
             result["error"] = "integration vanished between validation and dispatch"
             return result
 
+        # The member's workspace constitution path rides in the command
+        # arguments (never the environment): per-dispatch data stays safe
+        # under concurrent waves, where process-wide env would race.
+        args = member.tasks_file
+        if member.constitution is not None:
+            args = f"{args} {member.constitution}"
+
         # Sequential waves stream agent output live; parallel waves capture
         # (interleaved streams would be unreadable) under a timeout.
         stream = settings["max_concurrency"] <= 1
         try:
             dispatch = impl.dispatch_command(
                 settings["command"],
-                args=member.tasks_file,
+                args=args,
                 project_root=member.path,
                 model=settings["model"],
                 timeout=settings["dispatch_timeout"],

@@ -35,7 +35,7 @@ This repository is the **central specs repository** of a multi-repo workspace. T
    - When running interactively and a task's owner is ambiguous, ask the user; when running headless, assign it to "central" and flag it in the report
 
 5. **Write each member's task file** at `FEATURE_DIR/<member.tasks_file>`:
-   - Start with a short header: feature name, member id, and the member's `depends_on` list mirrored from the workspace manifest (informational)
+   - Start with a short header: feature name, member id, the member's `depends_on` list mirrored from the workspace manifest, and — when the member declares `constitution` in the manifest — the constitution file path (all informational)
    - Copy the member's tasks **preserving task IDs, phases, `[P]` parallel markers, and checkbox state** verbatim
    - Include a "Shared context" section pointing to `spec.md`, `plan.md`, and `contracts/` (relative to the feature directory) so the member's implement command can find them
 
