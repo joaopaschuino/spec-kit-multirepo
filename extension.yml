@@ -1,0 +1,42 @@
+schema_version: "1.0"
+
+extension:
+  id: multi-repo
+  name: "Multi-Repo Workspace Orchestration"
+  version: "0.1.0"
+  description: "Orchestrate spec-driven implementation across a workspace: a central specs repository dispatches implementation to member repositories"
+  author: "Joao Victor"
+  repository: "https://github.com/joaopaschuino/spec-kit-multirepo"
+  homepage: "https://github.com/joaopaschuino/spec-kit-multirepo"
+  license: "MIT"
+
+requires:
+  speckit_version: ">=0.9.0"
+
+provides:
+  commands:
+    - name: speckit.multi-repo.tasks
+      file: commands/speckit.multi-repo.tasks.md
+      description: "Split the active feature's tasks.md into per-member task files (run in the central specs repository)"
+    - name: speckit.multi-repo.implement
+      file: commands/speckit.multi-repo.implement.md
+      description: "Implement this repository's slice of a centrally-specified feature (run in a member repository)"
+
+  config:
+    - name: "multi-repo-config.yml"
+      template: "config-template.yml"
+      description: "Optional multi-repo settings (member task file default, feature persistence)"
+      required: false
+
+hooks:
+  after_tasks:
+    command: speckit.multi-repo.tasks
+    optional: true
+    prompt: "Split tasks across workspace members?"
+    description: "Split the generated tasks into per-member task files based on .specify/workspace.yml"
+
+tags:
+  - "multi-repo"
+  - "orchestration"
+  - "workspace"
+  - "specs"

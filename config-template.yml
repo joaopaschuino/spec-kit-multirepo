@@ -1,0 +1,17 @@
+# Multi-Repo extension configuration.
+#
+# All fields are optional. The orchestrated dispatch (the multi-repo workflow
+# step) reads its own settings from the step configuration in workflow YAML;
+# this file only carries defaults for interactive, non-orchestrated use of
+# /speckit.multi-repo.implement inside a member repository.
+implement:
+  # Default tasks file for this member, relative to the feature directory
+  # (e.g. "tasks/lambda.md"). Used when the command runs with no arguments
+  # and SPECKIT_MULTI_REPO_TASKS_FILE is unset.
+  tasks_file: ""
+
+  # Keep this member's .specify/feature.json pointing at the central feature
+  # directory after an orchestrated dispatch, so subsequent interactive
+  # commands pick up the same feature. The workflow step's own
+  # "persist_feature" setting must also be enabled for this to apply.
+  persist_feature: false

@@ -1,0 +1,43 @@
+schema_version: "1.0"
+workflow:
+  id: "multi-repo"
+  name: "Multi-Repo Implementation"
+  version: "0.1.0"
+  author: "Joao Victor"
+  description: "Dispatches implementation of a centrally-specified feature to workspace member repositories in dependency order"
+
+requires:
+  speckit_version: ">=0.9.0"
+
+inputs:
+  feature:
+    type: string
+    required: false
+    prompt: "Feature directory (relative to the project root or absolute); defaults to the active feature"
+  confirm:
+    type: string
+    required: false
+    prompt: "Pre-approval for the confirm gate (approve/reject); when omitted and attached to a TTY, the gate prompts interactively"
+  review:
+    type: string
+    required: false
+    prompt: "Pre-approval for the review gate (approve/reject); when omitted and attached to a TTY, the gate prompts interactively"
+
+steps:
+  - id: confirm
+    type: gate
+    message: "Dispatch implementation to the workspace members in dependency order?"
+    options: [approve, reject]
+    on_reject: abort
+    verdict_input: confirm
+
+  - id: implement
+    type: multi-repo-implement
+    feature: "{{ inputs.feature }}"
+
+  - id: review
+    type: gate
+    message: "Member dispatch finished. Review the per-member results above before completing the run."
+    options: [approve, reject]
+    on_reject: abort
+    verdict_input: review
