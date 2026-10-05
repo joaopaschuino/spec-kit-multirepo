@@ -9,6 +9,10 @@ This is a Spec Kit extension package (Route B): it uses only stable extension
 surfaces — an extension (agent commands + hooks), a custom workflow step, and
 a workflow definition — without modifying the Spec Kit core.
 
+> 📖 **New here?** Follow the [tutorial](docs/tutorial.md) — it builds a
+> three-repository workspace from scratch and takes a feature through
+> split, dispatch, failure, and resume.
+
 ## How it works
 
 ```
