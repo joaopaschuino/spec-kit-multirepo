@@ -43,8 +43,15 @@ central specs repo                    member repos
 
 ## Install
 
-Requirements: Spec Kit ≥ 0.9.0, member repos initialized with
-`specify init --integration <agent>`.
+Requirements: **Spec Kit ≥ 1.1.0** (`specify --version` to check), member
+repos initialized with `specify init --integration <agent>`.
+
+1.1.0 is required because installing the custom workflow step needs
+`specify workflow step add --dev/--from` (introduced in Spec Kit 1.1.0).
+Upgrade with `specify self upgrade` (uv-tool and pipx installs are upgraded
+automatically; `--dry-run` previews first). On Spec Kit 1.0.x, the
+extension and workflows still install, but the step has to be copied by
+hand: `cp -R step/multi-repo-implement <central>/.specify/workflows/steps/`.
 
 ### From a GitHub release (no clone needed)
 

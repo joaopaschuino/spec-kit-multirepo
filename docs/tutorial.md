@@ -8,7 +8,8 @@ agent CLIs.
 
 Time: ~30 minutes. Prerequisites:
 
-- `specify` CLI ≥ 0.9.0 installed
+- `specify` CLI ≥ 1.1.0 installed (`specify --version` to check; upgrade
+  with `specify self upgrade`)
 - A coding agent CLI installed **and authenticated** (this tutorial uses
   `claude`; `copilot`, `gemini`, `codex`, … work the same way)
 - Git

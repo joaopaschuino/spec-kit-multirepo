@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Reinstall the extension and the custom workflow step; re-add both
   workflows (`multi-repo` gained inputs, `multi-repo-check` is new)
+- **Spec Kit ≥ 1.1.0 is now required**: installing the custom step needs
+  `specify workflow step add --dev/--from`, introduced in Spec Kit 1.1.0.
+  On 1.0.x, copy the step package by hand:
+  `cp -R step/multi-repo-implement <central>/.specify/workflows/steps/`
 
 ## [0.2.0] - 2026-10-04
 
