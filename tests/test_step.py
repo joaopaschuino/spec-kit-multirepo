@@ -428,6 +428,191 @@ def test_execute_missing_constitution_blocks_dispatch(
     assert "s3" in (result.error or "")
 
 
+def test_execute_dry_run_reports_without_dispatch(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """Dry run classifies every declared member and dispatches nothing."""
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "s3", "path": "repo-s3"},
+            {"id": "lambda", "path": "repo-lambda", "depends_on": ["s3"]},
+        ],
+    )
+    make_member(tmp_path, "s3")  # ready
+    # lambda: directory absent entirely (never cloned)
+    make_feature(central, task_files={"s3": "", "lambda": ""})
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {
+            "id": "i",
+            "type": "multi-repo-implement",
+            "feature": "specs/001-demo",
+            "dry_run": True,
+        },
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    assert dispatch_calls == []  # nothing dispatched
+    assert result.output["dry_run"] is True
+    assert result.output["results"] == []
+    assert result.output["failed"] == []
+    assert result.output["missing"] == ["lambda"]
+    assert result.output["waves"] == [["s3"]]  # only ready participants
+
+    members = {m["repo"]: m for m in result.output["members"]}
+    assert members["s3"]["status"] == "ready"
+    assert members["s3"]["participant"] is True
+    assert members["lambda"]["status"] == "not-cloned"
+    assert members["lambda"]["participant"] is True
+    assert members["lambda"]["reason"] == (
+        f"member path not found: {(tmp_path / 'repo-lambda').resolve()}"
+    )
+
+
+def test_execute_dry_run_without_feature_reports_whole_workspace(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """A feature-less dry run is the workspace-level readiness report."""
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "s3", "path": "repo-s3"},
+            {"id": "glue", "path": "repo-glue", "constitution": "constitutions/glue.md"},
+        ],
+    )
+    make_member(tmp_path, "s3")
+    make_member(tmp_path, "glue")
+    patch_integration(monkeypatch, dispatch_calls)
+    monkeypatch.delenv("SPECIFY_FEATURE_DIRECTORY", raising=False)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "dry_run": True},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    assert dispatch_calls == []
+    members = {m["repo"]: m for m in result.output["members"]}
+    assert members["s3"]["status"] == "ready"
+    assert members["glue"]["status"] == "constitution-missing"
+    assert result.output["waves"] == [["s3"]]  # glue not dispatchable
+
+
+def test_execute_missing_skip_dispatches_ready_and_reports_missing(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "s3", "path": "repo-s3"},
+            {"id": "lambda", "path": "repo-lambda", "depends_on": ["s3"]},
+        ],
+    )
+    make_member(tmp_path, "s3")
+    # lambda: cloned but bare — no .specify/ (never initialized)
+    (tmp_path / "repo-lambda").mkdir()
+    make_feature(central, task_files={"s3": "", "lambda": ""})
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {
+            "id": "i",
+            "type": "multi-repo-implement",
+            "feature": "specs/001-demo",
+            "missing": "skip",
+        },
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    assert [c["member"] for c in dispatch_calls] == [S3]
+    assert result.output["waves"] == [["s3"]]
+    assert result.output["missing"] == ["lambda"]
+    assert result.output["failed"] == []
+    per_repo = {r["repo"]: r for r in result.output["results"]}
+    assert per_repo["s3"]["status"] == "completed"
+    assert per_repo["lambda"]["status"] == "missing"
+    assert "not a Spec Kit project" in per_repo["lambda"]["reason"]
+
+
+def test_execute_missing_skip_still_fails_on_config_errors(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """skip covers missing clones, not workspace configuration mistakes."""
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "s3", "path": "repo-s3"},
+            {"id": "lambda", "path": "repo-lambda"},
+        ],
+    )
+    s3 = make_member(tmp_path, "s3")
+    (s3 / ".specify" / "integration.json").unlink()  # config error
+    # lambda not cloned at all
+    make_feature(central, task_files={"s3": ""})
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {
+            "id": "i",
+            "type": "multi-repo-implement",
+            "feature": "specs/001-demo",
+            "missing": "skip",
+        },
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.FAILED
+    assert dispatch_calls == []
+    assert "Member validation failed" in (result.error or "")
+    assert "no integration configured" in (result.error or "")
+
+
+def test_execute_uncloned_participant_fails_by_default(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    central = write_workspace(
+        tmp_path,
+        members=[{"id": "lambda", "path": "repo-lambda"}],
+    )
+    make_feature(central, task_files={"lambda": ""})
+    # repo-lambda never cloned
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.FAILED
+    assert dispatch_calls == []
+    assert "member path not found" in (result.error or "")
+
+
+def test_validate_missing_and_dry_run_settings(step_module):
+    errors = step_module.MultiRepoImplementStep().validate(
+        {"id": "i", "type": "multi-repo-implement", "missing": "bogus", "dry_run": 3}
+    )
+    assert any("'missing' must be 'error' or 'skip'" in e for e in errors)
+    assert any("'dry_run' must be" in e for e in errors)
+
+    # Workflow-input expressions and boolean strings flow through.
+    assert step_module.MultiRepoImplementStep().validate(
+        {
+            "id": "i",
+            "type": "multi-repo-implement",
+            "missing": "{{ inputs.missing }}",
+            "dry_run": "{{ inputs.dry_run }}",
+        }
+    ) == []
+    assert step_module.MultiRepoImplementStep().validate(
+        {"id": "i", "type": "multi-repo-implement", "missing": "skip", "dry_run": True}
+    ) == []
+
+
 def test_validate_reports_config_errors(step_module):
     errors = step_module.MultiRepoImplementStep().validate(
         {

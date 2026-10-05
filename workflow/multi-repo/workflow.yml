@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "multi-repo"
   name: "Multi-Repo Implementation"
-  version: "0.1.0"
+  version: "0.3.0"
   author: "Joao Victor"
   description: "Dispatches implementation of a centrally-specified feature to workspace member repositories in dependency order"
 
@@ -14,6 +14,14 @@ inputs:
     type: string
     required: false
     prompt: "Feature directory (relative to the project root or absolute); defaults to the active feature"
+  dry_run:
+    type: string
+    required: false
+    prompt: "Set to true to report member readiness and waves without dispatching anything"
+  missing:
+    type: string
+    required: false
+    prompt: "How to treat participants missing locally: error (default, aborts) or skip (dispatch the ready members)"
   confirm:
     type: string
     required: false
@@ -34,6 +42,8 @@ steps:
   - id: implement
     type: multi-repo-implement
     feature: "{{ inputs.feature }}"
+    dry_run: "{{ inputs.dry_run }}"
+    missing: "{{ inputs.missing }}"
 
   - id: review
     type: gate

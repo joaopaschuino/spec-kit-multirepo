@@ -52,16 +52,18 @@ In each **member repository**:
 
 ```sh
 specify extension add multi-repo --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.2.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.3.0.zip
 ```
 
 In the **central specs repository**, the two commands above plus:
 
 ```sh
 specify workflow step add multi-repo-implement --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.2.0/step-multi-repo-implement-v0.2.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.3.0/step-multi-repo-implement-v0.3.0.zip
 specify workflow add multi-repo --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.2.0/workflow/multi-repo/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.3.0/workflow/multi-repo/workflow.yml
+specify workflow add multi-repo-check --from \
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.3.0/workflow/multi-repo-check/workflow.yml
 ```
 
 (The step install asks an interactive trust confirmation before downloading —
@@ -71,7 +73,7 @@ default-deny; answer `yes`.)
 
 ```sh
 ./install.sh central /path/to/central-repo                # local (--dev) mode
-./install.sh member  /path/to/member-repo --release v0.2.0 # release mode
+./install.sh member  /path/to/member-repo --release v0.3.0 # release mode
 ```
 
 `install.sh` runs, respectively:
@@ -116,6 +118,12 @@ and a member's `constitution` file must exist in the central repository
 participating subset only — a member not in the feature never blocks its
 dependents.
 
+> **Naming tip**: member ids may be full repository names (e.g.
+> `itau-nm8-lambda-integracao`) — the task file then defaults to
+> `tasks/itau-nm8-lambda-integracao.md`, keeping every artifact
+> self-describing. With several repos of the same type, repo-named ids beat
+> generic ones (`lambda`, `lambda-2`).
+
 ## The workflow step — `multi-repo-implement`
 
 ```yaml
@@ -129,12 +137,16 @@ dependents.
   skip_completed: true              # skip members whose tasks are all [x]
   persist_feature: false            # keep feature.json in members
   stop_on_failure: true             # halt before the next wave on failure
+  dry_run: false                    # report readiness and waves, dispatch nothing
+  missing: error                    # error | skip for locally-absent members
 ```
 
 Output (usable in later steps / gates via `{{ steps.implement.output.* }}`):
 `feature`, `waves` (list of member-id lists), `results` (per-member
-`repo`, `wave`, `status` completed|failed|skipped, `exit_code`,
-`tasks_file`), and `failed`.
+`repo`, `wave`, `status` completed|failed|skipped|missing, `exit_code`,
+`tasks_file`), `failed`, `missing`, and `members` (the readiness report;
+every declared member on dry runs, with `status`, `reason`, `integration`,
+`constitution`, and `participant`).
 
 Dispatch details: each member's agent CLI runs headless (`claude -p …`,
 `copilot -p … --yolo`, …) with `cwd` = the member repo. Environment for every
@@ -201,6 +213,50 @@ Inside a member repo, `/speckit.multi-repo.implement` also works standalone
 (interactively) — it resolves the feature via `SPECIFY_FEATURE_DIRECTORY` or
 the member's persisted `feature.json`, and the member's task file via
 argument, `SPECKIT_MULTI_REPO_TASKS_FILE`, or the extension config.
+
+## Workspace check & scaffolding
+
+Two tools keep the workspace healthy as the team grows:
+
+**`specify workflow run multi-repo-check`** — a read-only doctor for the
+workspace. It runs the orchestrator step in `dry_run` mode: every declared
+member is classified (`ready` / `not-cloned` / `not-initialized` /
+`no-integration` / `unknown-integration` / `no-dispatch` /
+`constitution-missing`), participation is computed against the active
+feature (or the whole workspace when no feature is given), and dispatch
+waves are listed — nothing is dispatched. Use `--json` for a
+machine-readable report:
+
+```sh
+specify workflow run multi-repo-check --json \
+  | jq '.step_results.check.output.members'
+```
+
+**`missing: skip`** — for teams where each person has cloned only part of
+the workspace. By default (`missing: error`) a participant that is not
+cloned locally aborts the run before any dispatch. With `skip`, absent
+participants are recorded as `status: missing` (with the reason) and the
+ready members are dispatched:
+
+```sh
+specify workflow run multi-repo -i missing=skip
+```
+
+Configuration mistakes (no integration, unknown integration, missing
+constitution file) still abort in both modes — `skip` covers local absence,
+not manifest errors.
+
+**`/speckit.multi-repo.workspace`** — agent command for the central repo,
+with two modes:
+
+- *Scaffold* (no manifest yet): scans sibling directories for Spec Kit
+  projects and proposes a `.specify/workspace.yml` (ids from directory
+  names, relative paths). It never invents `depends_on` — the dependency
+  graph is human knowledge; interactively it asks, headlessly it writes the
+  graph empty with a warning
+- *Audit* (manifest exists): per-member readiness table, drift detection
+  (undeclared sibling projects), and confirmed additions only — existing
+  entries and their dependencies are never modified
 
 ## What lands in each repository
 

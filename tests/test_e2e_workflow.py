@@ -109,19 +109,24 @@ def read_run_state(central: Path) -> dict:
     return json.loads(state_path.read_text(encoding="utf-8"))
 
 
-def test_install_run_and_resume(central):
-    root, feature, lambda_repo = central
-
-    # -- install the components through the real CLI -----------------------
+def install_components():
+    """Install the step and both workflows through the real CLI."""
     result = invoke_specify(
         ["workflow", "step", "add", "multi-repo-implement", "--dev", str(PACKAGE_ROOT / "step" / "multi-repo-implement")]
     )
     assert result.exit_code == 0, result.output
+    for name in ("multi-repo", "multi-repo-check"):
+        result = invoke_specify(
+            ["workflow", "add", str(PACKAGE_ROOT / "workflow" / name), "--dev"]
+        )
+        assert result.exit_code == 0, result.output
 
-    result = invoke_specify(
-        ["workflow", "add", str(PACKAGE_ROOT / "workflow" / "multi-repo"), "--dev"]
-    )
-    assert result.exit_code == 0, result.output
+
+def test_install_run_and_resume(central):
+    root, feature, lambda_repo = central
+
+    # -- install the components through the real CLI -----------------------
+    install_components()
 
     # -- first run: lambda fails (sentinel), run fails ---------------------
     (lambda_repo / "fail-agent").write_text("", encoding="utf-8")
@@ -177,6 +182,74 @@ def test_install_run_and_resume(central):
         assert "tasks/s3.md" in s3_call["args"]
         assert "constitutions/s3.md" in s3_call["args"]
         assert lambda_call["args"].endswith("tasks/lambda.md")
+
+
+def test_multi_repo_check_reports_without_dispatch(central):
+    """The check workflow reports readiness and waves, dispatching nothing."""
+    root, feature, _lambda_repo = central
+    install_components()
+
+    result = invoke_specify(
+        ["workflow", "run", "multi-repo-check", "-i", f"feature={feature.relative_to(root).as_posix()}"]
+    )
+    assert result.exit_code == 0, result.output
+
+    # No agent was executed.
+    assert not Path(os.environ["FAKE_AGENT_LOG"]).exists()
+
+    state = read_run_state(root)
+    assert state["status"] == "completed"
+    check = state["step_results"]["check"]
+    assert check["status"] == "completed"
+    output = check["output"]
+    assert output["dry_run"] is True
+    assert output["waves"] == [["s3"], ["lambda"]]
+    assert output["results"] == []
+    members = {m["repo"]: m for m in output["members"]}
+    assert members["s3"]["status"] == "ready"
+    assert members["s3"]["participant"] is True
+    assert members["s3"]["integration"] == "claude"
+    assert members["s3"]["constitution"].endswith("constitutions/s3.md")
+    assert members["lambda"]["status"] == "ready"
+
+
+def test_missing_skip_dispatches_ready_members(central):
+    """missing=skip through the real workflow: uncloned member recorded, rest dispatched."""
+    root, feature, lambda_repo = central
+    install_components()
+
+    # Make the lambda member locally absent: hide its Spec Kit scaffolding.
+    (lambda_repo / ".specify").rename(lambda_repo / ".specify-bak")
+
+    result = invoke_specify(
+        [
+            "workflow", "run", "multi-repo",
+            "-i", "confirm=approve",
+            "-i", "review=approve",
+            "-i", f"feature={feature.relative_to(root).as_posix()}",
+            "-i", "missing=skip",
+        ]
+    )
+    assert result.exit_code == 0, result.output  # run completes with skips
+
+    log = read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))
+    # s3 dispatched (its tasks file is among the args; the constitution path
+    # follows), lambda skipped as missing.
+    tasks_args = [[t for t in r["args"].split(" ") if t.startswith("tasks/")] for r in log]
+    assert tasks_args == [["tasks/s3.md"]]
+
+    state = read_run_state(root)
+    assert state["status"] == "completed"
+    implement = state["step_results"]["implement"]
+    assert implement["status"] == "completed"
+    output = implement["output"]
+    assert output["waves"] == [["s3"]]
+    assert output["missing"] == ["lambda"]
+    assert output["failed"] == []
+    per_repo = {r["repo"]: r for r in output["results"]}
+    assert per_repo["s3"]["status"] == "completed"
+    assert per_repo["lambda"]["status"] == "missing"
+    assert "not a Spec Kit project" in per_repo["lambda"]["reason"]
 
 
 def test_extension_installs_and_registers_commands(tmp_path, fake_agent, monkeypatch):

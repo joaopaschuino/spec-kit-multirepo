@@ -95,6 +95,13 @@ the orchestrator) → the member's own `.specify/memory/constitution.md`, with
 the most restrictive rule winning. A configured but missing constitution
 file fails the run before any dispatch.
 
+> **Tip**: instead of writing the manifest by hand, run
+> `/speckit.multi-repo.workspace` in the central repo — it scans sibling
+> directories for Spec Kit projects and proposes the manifest (you fill in
+> the `depends_on` graph), and audits an existing one afterwards. Verify
+> readiness at any time with `specify workflow run multi-repo-check` — a
+> read-only report of which members are ready, missing, or misconfigured.
+
 ## 3. Specify, plan, and generate tasks (central)
 
 Open your agent in `central/` and run the standard Spec Kit cycle:

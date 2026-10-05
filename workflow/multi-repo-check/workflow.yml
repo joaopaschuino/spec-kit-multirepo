@@ -1,0 +1,22 @@
+schema_version: "1.0"
+workflow:
+  id: "multi-repo-check"
+  name: "Multi-Repo Workspace Check"
+  version: "0.3.0"
+  author: "Joao Victor"
+  description: "Read-only workspace report: member readiness, integrations, constitutions, and dispatch waves — dispatches nothing"
+
+requires:
+  speckit_version: ">=0.9.0"
+
+inputs:
+  feature:
+    type: string
+    required: false
+    prompt: "Feature directory to check participation against; omit to report the whole declared workspace"
+
+steps:
+  - id: check
+    type: multi-repo-implement
+    dry_run: true
+    feature: "{{ inputs.feature }}"

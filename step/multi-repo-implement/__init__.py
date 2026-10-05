@@ -16,9 +16,24 @@ Configuration (all fields optional)::
       command: speckit.multi-repo.implement
       max_concurrency: 1                # per-wave parallelism (stream=False)
       dispatch_timeout: 3600            # seconds, parallel mode only
-      skip_completed: true              # skip members with all tasks checked
-      persist_feature: false            # write feature.json in members
-      stop_on_failure: true             # halt before the next wave on failure
+    skip_completed: true              # skip members with all tasks checked
+    persist_feature: false            # write feature.json in members
+    stop_on_failure: true             # halt before the next wave on failure
+    dry_run: false                    # report member readiness, dispatch nothing
+    missing: error                    # error | skip for locally-absent members
+
+``dry_run: true`` turns the step into a read-only workspace report: every
+declared member is classified (ready / not-cloned / not-initialized /
+no-integration / unknown-integration / no-dispatch / constitution-missing),
+participation and waves are computed, and nothing is dispatched. The
+``multi-repo-check`` workflow wraps this mode as a workspace doctor.
+
+``missing: skip`` supports teams where each member of the team has cloned
+only part of the workspace: participants that are not cloned locally (or not
+initialized) are recorded as ``status: missing`` in the results and the
+ready members are dispatched. Configuration errors (no integration,
+unknown integration, no dispatch support, missing constitution file) still
+fail the run in both modes.
 
 Members may also declare a shared ``constitution`` file (stored in the
 central repository, e.g. ``constitutions/lambda.md``) in
@@ -66,8 +81,21 @@ _KNOWN_CONFIG_KEYS = {
     "skip_completed",
     "persist_feature",
     "stop_on_failure",
+    "dry_run",
+    "missing",
     "model",
 }
+
+#: Statuses that mean "this teammate's machine lacks the member locally".
+_LOCALLY_MISSING_STATUSES = ("not-cloned", "not-initialized")
+
+#: Statuses that mean the workspace configuration itself is wrong.
+_CONFIG_ERROR_STATUSES = (
+    "no-integration",
+    "unknown-integration",
+    "no-dispatch",
+    "constitution-missing",
+)
 
 
 class MultiRepoImplementStep(StepBase):
@@ -124,6 +152,23 @@ class MultiRepoImplementStep(StepBase):
                     f"true or false, got {value!r}."
                 )
 
+        missing_value = config.get("missing")
+        if missing_value is not None and (
+            not isinstance(missing_value, str)
+            or ("{{" not in missing_value and missing_value not in ("error", "skip"))
+        ):
+            errors.append(
+                f"Multi-repo-implement step {step_id}: 'missing' must be "
+                f"'error' or 'skip', got {missing_value!r}."
+            )
+
+        dry_run_value = config.get("dry_run")
+        if dry_run_value is not None and not isinstance(dry_run_value, (bool, str)):
+            errors.append(
+                f"Multi-repo-implement step {step_id}: 'dry_run' must be "
+                f"true or false, got {dry_run_value!r}."
+            )
+
         return errors
 
     @staticmethod
@@ -150,9 +195,23 @@ class MultiRepoImplementStep(StepBase):
             return StepResult(status=StepStatus.FAILED, output=output, error=str(exc))
         output["workspace"] = workspace.id
 
-        # 2. Central feature directory.
+        # 2. Central feature directory. Optional for dry runs: a workspace
+        # check without an active feature reports the whole workspace.
         feature_raw = settings["feature"] or read_feature_directory_safe(workspace.root)
-        if not feature_raw:
+        feature_dir: Path | None = None
+        if feature_raw:
+            feature_dir = Path(feature_raw)
+            if not feature_dir.is_absolute():
+                feature_dir = workspace.root / feature_dir
+            feature_dir = feature_dir.resolve()
+            if not feature_dir.is_dir():
+                return StepResult(
+                    status=StepStatus.FAILED,
+                    output=output,
+                    error=f"Feature directory not found: {feature_dir}",
+                )
+            output["feature"] = str(feature_dir)
+        elif not settings["dry_run"]:
             return StepResult(
                 status=StepStatus.FAILED,
                 output=output,
@@ -161,21 +220,11 @@ class MultiRepoImplementStep(StepBase):
                     "or record an active feature in the central repository."
                 ),
             )
-        feature_dir = Path(feature_raw)
-        if not feature_dir.is_absolute():
-            feature_dir = workspace.root / feature_dir
-        feature_dir = feature_dir.resolve()
-        if not feature_dir.is_dir():
-            return StepResult(
-                status=StepStatus.FAILED,
-                output=output,
-                error=f"Feature directory not found: {feature_dir}",
-            )
-        output["feature"] = str(feature_dir)
 
-        # 3. Participating members.
+        # 3. Participating members (all declared members on a feature-less
+        # dry run — the workspace-level readiness report).
         participants = self._participants(workspace, settings, feature_dir)
-        if not participants:
+        if not participants and not settings["dry_run"]:
             return StepResult(
                 status=StepStatus.FAILED,
                 output=output,
@@ -187,28 +236,95 @@ class MultiRepoImplementStep(StepBase):
                 ),
             )
 
-        # 4. Member validation (filesystem + integration) before any dispatch.
-        integration_keys, invalid = self._resolve_integrations(participants)
-        if invalid:
-            details = "; ".join(f"{mid}: {err}" for mid, err in sorted(invalid.items()))
+        # 4. Member readiness classification (filesystem + integration).
+        classify_scope = list(workspace.members) if settings["dry_run"] else participants
+        report = self._classify_members(classify_scope)
+        participant_ids = {member.id for member in participants}
+        output["members"] = []
+        for member in classify_scope:
+            classified = report[member.id]
+            entry: dict[str, Any] = {
+                "repo": member.id,
+                "path": str(member.path),
+                "tasks_file": member.tasks_file,
+                "status": classified["status"],
+            }
+            if classified["reason"]:
+                entry["reason"] = classified["reason"]
+            if classified["integration"]:
+                entry["integration"] = classified["integration"]
+            if member.constitution:
+                entry["constitution"] = str(member.constitution)
+            if settings["dry_run"]:
+                entry["participant"] = member.id in participant_ids
+            output["members"].append(entry)
+
+        config_errors = {
+            member.id: report[member.id]["reason"]
+            for member in classify_scope
+            if report[member.id]["status"] in _CONFIG_ERROR_STATUSES
+        }
+        locally_missing = [
+            member
+            for member in classify_scope
+            if report[member.id]["status"] in _LOCALLY_MISSING_STATUSES
+        ]
+
+        # 5. Dry run: report readiness and waves, dispatch nothing.
+        if settings["dry_run"]:
+            ready_ids = [
+                member.id
+                for member in participants
+                if report[member.id]["status"] == "ready"
+            ]
+            output["dry_run"] = True
+            output["waves"] = workspace_waves(workspace, ready_ids)
+            output["results"] = []
+            output["failed"] = []
+            output["missing"] = [member.id for member in locally_missing]
+            return StepResult(status=StepStatus.COMPLETED, output=output)
+
+        # Configuration errors abort in every mode: they are manifest/setup
+        # mistakes, not a teammate's missing clone.
+        if config_errors:
+            details = "; ".join(f"{mid}: {err}" for mid, err in sorted(config_errors.items()))
             return StepResult(
                 status=StepStatus.FAILED,
                 output=output,
                 error=f"Member validation failed. {details}",
             )
 
-        # 5. Dependency waves.
-        waves = workspace_waves(workspace, [member.id for member in participants])
-        output["waves"] = waves
+        # Locally-absent participants: the default aborts before any
+        # dispatch; "skip" records them and dispatches the ready members.
+        if locally_missing and settings["missing"] != "skip":
+            details = "; ".join(
+                f"{member.id}: {report[member.id]['reason']}" for member in locally_missing
+            )
+            return StepResult(
+                status=StepStatus.FAILED,
+                output=output,
+                error=f"Member validation failed. {details}",
+            )
 
-        # 6. Dispatch, wave by wave, with the feature axis exported.
+        # 6. Dependency waves over the ready members.
+        ready = [
+            member for member in participants if report[member.id]["status"] == "ready"
+        ]
+        integration_keys = {
+            member.id: report[member.id]["integration"] for member in ready
+        }
+        waves = workspace_waves(workspace, [member.id for member in ready])
+        output["waves"] = waves
+        output["missing"] = [member.id for member in locally_missing]
+
+        # 7. Dispatch, wave by wave, with the feature axis exported.
+        results: list[dict[str, Any]] = []
+        failed: list[str] = []
+        stopped_after_wave: int | None = None
         env_token = self._apply_feature_env(feature_dir, settings["persist_feature"])
         try:
-            results: list[dict[str, Any]] = []
-            failed: list[str] = []
-            stopped_after_wave: int | None = None
             for wave_index, wave in enumerate(waves):
-                wave_members = [m for m in participants if m.id in wave]
+                wave_members = [m for m in ready if m.id in wave]
                 for member, result in self._dispatch_wave(
                     wave_members,
                     wave_index,
@@ -224,6 +340,20 @@ class MultiRepoImplementStep(StepBase):
                     break
         finally:
             self._restore_feature_env(env_token)
+
+        for member in locally_missing:
+            results.append(
+                {
+                    "repo": member.id,
+                    "wave": None,
+                    "tasks_file": member.tasks_file,
+                    "integration": None,
+                    "constitution": str(member.constitution) if member.constitution else None,
+                    "status": "missing",
+                    "reason": report[member.id]["reason"],
+                    "exit_code": None,
+                }
+            )
 
         output["results"] = results
         output["failed"] = failed
@@ -272,6 +402,11 @@ class MultiRepoImplementStep(StepBase):
         if not isinstance(repos, list):
             repos = None
 
+        missing_raw = resolve(config.get("missing"))
+        missing = str(missing_raw).strip().lower() if missing_raw is not None else ""
+        if missing not in ("error", "skip"):
+            missing = "error"
+
         return {
             "feature": str(resolve(config.get("feature")) or "").strip() or None,
             "repos": repos,
@@ -282,27 +417,37 @@ class MultiRepoImplementStep(StepBase):
             "skip_completed": resolve_bool(config.get("skip_completed"), True),
             "persist_feature": resolve_bool(config.get("persist_feature"), False),
             "stop_on_failure": resolve_bool(config.get("stop_on_failure"), True),
+            "dry_run": resolve_bool(config.get("dry_run"), False),
+            "missing": missing,
         }
 
     @staticmethod
     def _participants(
-        workspace: Workspace, settings: dict[str, Any], feature_dir: Path
+        workspace: Workspace,
+        settings: dict[str, Any],
+        feature_dir: Path | None,
     ) -> list[Member]:
         if settings["repos"] is not None:
             return [m for m in workspace.members if m.id in set(settings["repos"])]
+        if feature_dir is None:
+            # No active feature (feature-less dry run): report the whole
+            # declared workspace.
+            return list(workspace.members)
         # Auto-detection: a member participates when its task file exists in
         # the central feature directory.
         return [m for m in workspace.members if (feature_dir / m.tasks_file).is_file()]
 
     @staticmethod
-    def _resolve_integrations(
-        participants: list[Member],
-    ) -> tuple[dict[str, str], dict[str, str]]:
-        """Validate each participant.
+    def _classify_members(
+        members: list[Member],
+    ) -> dict[str, dict[str, Any]]:
+        """Classify each member's dispatch readiness.
 
-        Returns ``(integration_keys, errors)``: ``integration_keys`` maps
-        member id -> integration key for every dispatchable member;
-        ``errors`` maps member id -> actionable message for the rest.
+        Returns ``{member_id: {"status", "integration", "reason"}}`` with
+        statuses ``ready``, ``not-cloned``, ``not-initialized``,
+        ``no-integration``, ``unknown-integration``, ``no-dispatch``, and
+        ``constitution-missing``. ``ready`` entries carry the resolved
+        integration key; every other entry carries an actionable reason.
         """
         from specify_cli.integration_state import (
             default_integration_key,
@@ -310,24 +455,31 @@ class MultiRepoImplementStep(StepBase):
         )
         from specify_cli.integrations import get_integration
 
-        keys: dict[str, str] = {}
-        errors: dict[str, str] = {}
-        for member in participants:
+        report: dict[str, dict[str, Any]] = {}
+        for member in members:
+            entry: dict[str, Any] = {"status": "ready", "integration": None, "reason": None}
+
             if not member.path.is_dir():
-                errors[member.id] = f"member path not found: {member.path}"
+                entry["status"] = "not-cloned"
+                entry["reason"] = f"member path not found: {member.path}"
+                report[member.id] = entry
                 continue
             if not (member.path / ".specify").is_dir():
-                errors[member.id] = (
+                entry["status"] = "not-initialized"
+                entry["reason"] = (
                     f"{member.path} is not a Spec Kit project (no .specify/); "
                     "run 'specify init' in the member repository first"
                 )
+                report[member.id] = entry
                 continue
             if member.constitution is not None and not member.constitution.is_file():
-                errors[member.id] = (
+                entry["status"] = "constitution-missing"
+                entry["reason"] = (
                     f"workspace constitution file not found: {member.constitution} "
                     "(the member's 'constitution' in workspace.yml must point to "
                     "an existing file in the central repository)"
                 )
+                report[member.id] = entry
                 continue
 
             key = member.integration
@@ -335,24 +487,32 @@ class MultiRepoImplementStep(StepBase):
                 state, _error = try_read_integration_json(member.path)
                 key = default_integration_key(state) if state else None
             if not key:
-                errors[member.id] = (
+                entry["status"] = "no-integration"
+                entry["reason"] = (
                     "no integration configured; run 'specify init' in the "
                     "member repository or set 'integration' in workspace.yml"
                 )
+                report[member.id] = entry
                 continue
 
             impl = get_integration(key)
             if impl is None:
-                errors[member.id] = f"unknown integration {key!r}"
+                entry["status"] = "unknown-integration"
+                entry["reason"] = f"unknown integration {key!r}"
+                report[member.id] = entry
                 continue
             if impl.build_exec_args("__speckit_multi_repo_probe__") is None:
-                errors[member.id] = (
+                entry["status"] = "no-dispatch"
+                entry["reason"] = (
                     f"integration {key!r} does not support non-interactive "
                     "CLI dispatch"
                 )
+                report[member.id] = entry
                 continue
-            keys[member.id] = key
-        return keys, errors
+
+            entry["integration"] = key
+            report[member.id] = entry
+        return report
 
     def _dispatch_wave(
         self,

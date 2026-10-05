@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-04
+
+### Added
+
+- `dry_run` setting on the orchestrator step and the new `multi-repo-check`
+  workflow: a read-only workspace report — every declared member classified
+  (`ready` / `not-cloned` / `not-initialized` / `no-integration` /
+  `unknown-integration` / `no-dispatch` / `constitution-missing`),
+  participation and dispatch waves computed, nothing dispatched. A
+  feature-less dry run reports the whole declared workspace
+- `missing` setting (`error` default | `skip`): with `skip`, participants
+  that are not cloned or not initialized locally are recorded as
+  `status: missing` (with reason) in the results while the ready members
+  dispatch; configuration errors still abort in both modes
+- `speckit.multi-repo.workspace` agent command: scaffolds
+  `.specify/workspace.yml` from sibling Spec Kit projects (never inventing
+  `depends_on`) or audits an existing manifest (readiness table, drift
+  detection, confirmed additions only)
+- `dry_run` and `missing` exposed as inputs on the `multi-repo` workflow
+
+### Upgrade
+
+- Reinstall the extension and the custom workflow step; re-add both
+  workflows (`multi-repo` gained inputs, `multi-repo-check` is new)
+
 ## [0.2.0] - 2026-10-04
 
 ### Added
