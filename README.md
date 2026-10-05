@@ -202,6 +202,44 @@ Inside a member repo, `/speckit.multi-repo.implement` also works standalone
 the member's persisted `feature.json`, and the member's task file via
 argument, `SPECKIT_MULTI_REPO_TASKS_FILE`, or the extension config.
 
+## What lands in each repository
+
+The design principle: **all feature state lives in the central repository;
+member repositories are only destinations for implementation**.
+
+**In members — install time (once, committed):**
+
+- The standard `.specify/` from `specify init` (templates, scripts, local
+  `memory/constitution.md`, `integration.json`)
+- The extension: `.specify/extensions/multi-repo/` + the hook registry in
+  `.specify/extensions.yml`
+- The agent commands (for example `.claude/skills/speckit-multi-repo-implement`)
+
+**In members — during a feature (runtime):**
+
+- The implemented code and tests — the only new content, so a member's PR is
+  a pure implementation diff, with no spec or metadata mixed in
+
+Nothing else, by default:
+
+| Artifact | Lives in | Why |
+|---|---|---|
+| `spec.md`, `plan.md`, `tasks.md`, per-member task files | Central | Single source of truth |
+| Task checkboxes `[x]` | Central (the agent edits the task file through `FEATURE_DIR`) | Progress is feature state, not member state |
+| Member's `.specify/feature.json` | Not written | The step runs with `persist_feature: false`, which sets `SPECIFY_FEATURE_NO_PERSIST=1` |
+| Workflow runs (`.specify/workflows/runs/`) | Central only | The orchestrator is the single status writer |
+| Spec/contract copies | None | The agent reads them live from the central repository |
+
+**The one exception, opt-in:** `persist_feature: true` makes the member
+record the central feature directory in its `.specify/feature.json` — useful
+to keep working on that feature interactively inside the member afterwards.
+It is off by default to keep members clean and allow concurrent dispatches
+without state races.
+
+**In the central repository:** the feature (`spec.md`, `plan.md`,
+orchestration `tasks.md`, per-member task files, `contracts/`), the
+workspace manifest, shared constitutions, and the workflow run history.
+
 ## Design notes — the path to a native feature (Route C)
 
 The manifest is deliberately shaped as a candidate native contract:
