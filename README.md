@@ -201,11 +201,17 @@ an upstream RFC.
 
 ## Development
 
-From a Spec Kit checkout:
+The test suite needs the `specify_cli` package importable — run it from a
+[Spec Kit checkout](https://github.com/github/spec-kit) with this repository
+cloned inside it, or from any virtualenv that has `specify-cli` installed:
 
 ```sh
+# from a spec-kit checkout with this repo at ./multi-repo (or adjust the path)
 uv sync --extra test
 .venv/bin/pytest multi-repo/tests
+
+# from this repository, using that venv
+/path/to/spec-kit/.venv/bin/pytest tests
 ```
 
 `tests/test_workspace.py` covers the manifest parser/validator and wave
