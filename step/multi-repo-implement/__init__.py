@@ -37,9 +37,14 @@ fail the run in both modes.
 
 Members may also declare a shared ``constitution`` file (stored in the
 central repository, e.g. ``constitutions/lambda.md``) in
-``.specify/workspace.yml``; it is validated to exist before any dispatch and
-its absolute path is appended to the dispatched command arguments so the
-member's agent reads it as the member/type governance layer.
+``.specify/workspace.yml``; it is validated to exist before any dispatch.
+
+Before dispatching a member, the step assembles a **governance bundle** —
+one Markdown file per member under ``<feature>/governance/<member>.md``
+containing every constitution layer that exists (workspace, member/type,
+member-local), each under a labeled heading. The bundle's absolute path is
+appended to the dispatched command arguments, so the member's agent reads
+one authoritative file instead of resolving layer paths itself.
 
 The step is stateless/thread-safe (shared instance): all per-run state comes
 from ``config``/``context``, and process-wide environment variables are set
@@ -69,6 +74,30 @@ from .workspace import (
 DEFAULT_COMMAND = "speckit.multi-repo.implement"
 
 _CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[(?P<mark>[ xX])\]", re.MULTILINE)
+
+#: Workspace-layer constitution, relative to the central project root.
+WORKSPACE_CONSTITUTION_RELPATH = Path(".specify") / "memory" / "constitution.md"
+
+#: Member-local constitution, relative to the member project root.
+LOCAL_CONSTITUTION_RELPATH = Path(".specify") / "memory" / "constitution.md"
+
+#: First heading of the unmodified `specify init` constitution template. A
+#: layer still carrying it defines no rules and is reported as absent, so
+#: placeholder text like ``[PRINCIPLE_1_NAME]`` never reaches a dispatched
+#: agent as if it were governance.
+_TEMPLATE_MARKER = "# [PROJECT_NAME] Constitution"
+
+#: Per-member governance bundles are assembled here, relative to the feature dir.
+GOVERNANCE_DIR = "governance"
+
+#: Bundle headings, keyed by the layer names used in ``read_governance_layers``.
+_LAYER_LABELS = {
+    "workspace": "Workspace constitution",
+    "member": "Member/type constitution",
+    "local": "Local constitution (lives in the member repository)",
+}
+
+_ABSENT_LAYER = "_Not present — nothing defined at this layer._"
 
 _KNOWN_CONFIG_KEYS = {
     "id",
@@ -238,7 +267,7 @@ class MultiRepoImplementStep(StepBase):
 
         # 4. Member readiness classification (filesystem + integration).
         classify_scope = list(workspace.members) if settings["dry_run"] else participants
-        report = self._classify_members(classify_scope)
+        report = self._classify_members(classify_scope, workspace.root)
         participant_ids = {member.id for member in participants}
         output["members"] = []
         for member in classify_scope:
@@ -331,6 +360,7 @@ class MultiRepoImplementStep(StepBase):
                     settings,
                     feature_dir,
                     integration_keys,
+                    workspace.root,
                 ):
                     results.append(result)
                     if result["status"] == "failed":
@@ -349,6 +379,7 @@ class MultiRepoImplementStep(StepBase):
                     "tasks_file": member.tasks_file,
                     "integration": None,
                     "constitution": str(member.constitution) if member.constitution else None,
+                    "governance": None,
                     "status": "missing",
                     "reason": report[member.id]["reason"],
                     "exit_code": None,
@@ -440,6 +471,7 @@ class MultiRepoImplementStep(StepBase):
     @staticmethod
     def _classify_members(
         members: list[Member],
+        workspace_root: Path,
     ) -> dict[str, dict[str, Any]]:
         """Classify each member's dispatch readiness.
 
@@ -479,6 +511,13 @@ class MultiRepoImplementStep(StepBase):
                     "(the member's 'constitution' in workspace.yml must point to "
                     "an existing file in the central repository)"
                 )
+                report[member.id] = entry
+                continue
+            try:
+                read_governance_layers(member, workspace_root)
+            except WorkspaceError as exc:
+                entry["status"] = "constitution-missing"
+                entry["reason"] = str(exc)
                 report[member.id] = entry
                 continue
 
@@ -521,6 +560,7 @@ class MultiRepoImplementStep(StepBase):
         settings: dict[str, Any],
         feature_dir: Path,
         integration_keys: dict[str, str],
+        workspace_root: Path,
     ) -> list[tuple[Member, dict[str, Any]]]:
         concurrency = settings["max_concurrency"]
         if concurrency > 1 and len(wave_members) > 1:
@@ -535,6 +575,7 @@ class MultiRepoImplementStep(StepBase):
                             settings,
                             feature_dir,
                             integration_keys,
+                            workspace_root,
                         ),
                     )
                     for member in wave_members
@@ -544,7 +585,7 @@ class MultiRepoImplementStep(StepBase):
             (
                 member,
                 self._dispatch_member(
-                    member, wave_index, settings, feature_dir, integration_keys
+                    member, wave_index, settings, feature_dir, integration_keys, workspace_root
                 ),
             )
             for member in wave_members
@@ -557,6 +598,7 @@ class MultiRepoImplementStep(StepBase):
         settings: dict[str, Any],
         feature_dir: Path,
         integration_keys: dict[str, str],
+        workspace_root: Path,
     ) -> dict[str, Any]:
         from specify_cli.integrations import get_integration
 
@@ -567,6 +609,7 @@ class MultiRepoImplementStep(StepBase):
             "tasks_file": member.tasks_file,
             "integration": key or None,
             "constitution": str(member.constitution) if member.constitution else None,
+            "governance": None,
             "status": "failed",
             "exit_code": None,
         }
@@ -581,12 +624,19 @@ class MultiRepoImplementStep(StepBase):
             result["error"] = "integration vanished between validation and dispatch"
             return result
 
-        # The member's workspace constitution path rides in the command
-        # arguments (never the environment): per-dispatch data stays safe
-        # under concurrent waves, where process-wide env would race.
-        args = member.tasks_file
-        if member.constitution is not None:
-            args = f"{args} {member.constitution}"
+        # Assemble the governance bundle: every constitution layer that
+        # exists is read here and delivered as one file, so the dispatched
+        # agent reads authoritative rules instead of resolving layer paths.
+        # The bundle path rides in the command arguments (never the
+        # environment): per-dispatch data stays safe under concurrent waves,
+        # where process-wide env would race.
+        try:
+            bundle = write_governance_bundle(member, workspace_root, feature_dir)
+        except (OSError, WorkspaceError) as exc:
+            result["error"] = f"governance bundle failed: {exc}"
+            return result
+        result["governance"] = str(bundle)
+        args = f"{member.tasks_file} {bundle}"
 
         # Sequential waves stream agent output live; parallel waves capture
         # (interleaved streams would be unreadable) under a timeout.
@@ -654,3 +704,98 @@ def read_feature_directory_safe(project_root: Path) -> str:
         return read_feature_directory(project_root)
     except WorkspaceError:
         return ""
+
+
+def read_governance_layers(member: Member, workspace_root: Path) -> dict[str, str | None]:
+    """Read every constitution layer that exists for *member*.
+
+    Returns ``{"workspace": ..., "member": ..., "local": ...}`` with ``None``
+    for layers that are not present (or still the unmodified ``specify init``
+    template). Raises :class:`WorkspaceError` when a layer exists but cannot
+    be read: the orchestrator refuses to dispatch an agent whose governance
+    it cannot deliver.
+    """
+    sources = {
+        "workspace": workspace_root / WORKSPACE_CONSTITUTION_RELPATH,
+        "member": member.constitution,
+        "local": member.path / LOCAL_CONSTITUTION_RELPATH,
+    }
+    layers: dict[str, str | None] = {}
+    for layer, path in sources.items():
+        if path is None or not path.is_file():
+            layers[layer] = None
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise WorkspaceError(
+                f"Cannot read the {layer} constitution for member "
+                f"{member.id!r}: {path}: {exc}"
+            ) from exc
+        layers[layer] = None if _TEMPLATE_MARKER in content else content
+    return layers
+
+
+def write_governance_bundle(
+    member: Member, workspace_root: Path, feature_dir: Path
+) -> Path:
+    """Assemble the member's constitution layers into one bundle file.
+
+    Writes ``<feature_dir>/governance/<member>.md`` (created on demand) and
+    returns its absolute path. Every existing layer is embedded under a
+    labeled heading; absent layers are marked as such so the dispatched agent
+    can name which layers applied. Per-member files keep concurrent waves
+    from racing on shared state.
+    """
+    layers = read_governance_layers(member, workspace_root)
+
+    def relpath(path: Path, base: Path) -> str:
+        try:
+            return str(path.relative_to(base))
+        except ValueError:
+            return str(path)
+
+    lines = [
+        f"# Governance bundle — {member.id}",
+        "",
+        "Assembled by the multi-repo orchestrator at dispatch time. Every layer",
+        "below applies to this member's implementation; when layers conflict, the",
+        "most restrictive rule wins (each layer narrows the one above, never",
+        "loosens it).",
+    ]
+    for index, layer in enumerate(("workspace", "member", "local"), start=1):
+        content = layers[layer]
+        if layer == "workspace":
+            source = relpath(
+                workspace_root / WORKSPACE_CONSTITUTION_RELPATH, workspace_root
+            )
+        elif layer == "member":
+            source = (
+                relpath(member.constitution, workspace_root)
+                if member.constitution is not None
+                else "not declared in workspace.yml"
+            )
+        else:
+            source = relpath(
+                member.path / LOCAL_CONSTITUTION_RELPATH, member.path
+            )
+        lines.extend(
+            [
+                "",
+                f"## Layer {index} — {_LAYER_LABELS[layer]} (`{source}`)",
+                "",
+                content.strip() if content else _ABSENT_LAYER,
+            ]
+        )
+
+    bundle_dir = feature_dir / GOVERNANCE_DIR
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    bundle = bundle_dir / f"{member.id}.md"
+    try:
+        bundle.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise WorkspaceError(
+            f"Cannot write the governance bundle for member {member.id!r}: "
+            f"{bundle}: {exc}"
+        ) from exc
+    return bundle

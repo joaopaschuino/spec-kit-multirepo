@@ -12,7 +12,7 @@ scripts:
 $ARGUMENTS
 ```
 
-You **MUST** consider the user input before proceeding (if not empty). When this command is dispatched by the multi-repo orchestrator, `$ARGUMENTS` contains the member's tasks file path **relative to the feature directory** (for example `tasks/lambda.md`) and, when the member declares a workspace constitution, that constitution file's **absolute path** as a second token.
+You **MUST** consider the user input before proceeding (if not empty). When this command is dispatched by the multi-repo orchestrator, `$ARGUMENTS` contains the member's tasks file path **relative to the feature directory** (for example `tasks/lambda.md`) followed by the **absolute path to this member's governance bundle** — one file the orchestrator assembled from every constitution layer that exists. Read that bundle in full during the Governance step and treat it as authoritative.
 
 ## Purpose
 
@@ -74,10 +74,12 @@ This repository is a **member** of a multi-repo workspace. The active feature is
    - **IF EXISTS**: Read `FEATURE_DIR/plan.md` for tech stack, architecture, and file structure
    - **IF EXISTS**: Read `FEATURE_DIR/data-model.md`, `FEATURE_DIR/contracts/`, `FEATURE_DIR/research.md`, `FEATURE_DIR/quickstart.md`
 
-4. **Governance — read every layer that exists; when layers conflict, the most restrictive rule wins.** Each layer narrows the one above it, never loosens it:
-   1. *Workspace*: `<central-root>/.specify/memory/constitution.md` — the central root is two levels above FEATURE_DIR
-   2. *Member/type*: the second token of `$ARGUMENTS`, when present — the absolute path to this member's shared constitution file in the central repository (for example `constitutions/lambda.md`, shared by every member of the same type). When absent, look up this repository's entry in `<central-root>/.specify/workspace.yml` (the member whose `path` resolves to the current working directory) and read its `constitution` file relative to the central root, if set
-   3. *Local*: this repository's `.specify/memory/constitution.md`, if it exists
+4. **Governance — read every rule that applies to this repository; when layers conflict, the most restrictive rule wins.** Each layer narrows the one above it, never loosens it:
+   - **Dispatched by the orchestrator** (second token of `$ARGUMENTS` present): that token is the absolute path to this member's **governance bundle**. Read the entire file. It contains every existing layer under a labeled heading — *Layer 1 — Workspace constitution*, *Layer 2 — Member/type constitution*, *Layer 3 — Local constitution* — with layers that do not exist marked "Not present". Apply every rule in the layers that exist; layers marked "Not present" impose nothing. Do not re-resolve constitution paths yourself when the bundle is available.
+   - **Standalone fallback** (running interactively without the orchestrator, no second token): resolve the layers manually:
+     1. *Workspace*: `<central-root>/.specify/memory/constitution.md` — the central root is two levels above FEATURE_DIR
+     2. *Member/type*: look up this repository's entry in `<central-root>/.specify/workspace.yml` (the member whose `path` resolves to the current working directory) and read its `constitution` file relative to the central root, if set
+     3. *Local*: this repository's `.specify/memory/constitution.md`, if it exists
 
    Type constitutions hold only rules true for the whole type (runtime, naming, mandatory checks); repo-specific exceptions belong in the local layer.
 
@@ -100,7 +102,7 @@ This repository is a **member** of a multi-repo workspace. The active feature is
    - Follow TDD where the task list pairs test and implementation tasks
    - Write code, configuration, and documentation **in this repository** (the current working directory)
    - When a task depends on a cross-repo contract (event schema, bucket policy, API shape), treat `FEATURE_DIR/contracts/` as the authority; do not invent divergent copies
-   - Where a governance rule constrains a task (layer 1–4 above), the rule wins over the task text
+   - Where a governance rule constrains a task (Governance step above), the rule wins over the task text
 
 9. Progress tracking and error handling:
    - Report progress after each completed task
@@ -115,7 +117,7 @@ This repository is a **member** of a multi-repo workspace. The active feature is
     - Tasks completed / total from `FEATURE_DIR/TASKS_FILE`
     - Files created or modified in this repository
     - Test and lint results
-    - Governance layers applied (which of the three existed), and any rule that overrode a task
+    - Governance layers applied (which of the three existed in the governance bundle, or in the standalone fallback), and any rule that overrode a task
     - Any cross-repo contract consumed, and any checklist items left unchecked
 
 ## Mandatory Post-Execution Hooks

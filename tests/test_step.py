@@ -339,7 +339,7 @@ def test_execute_missing_workspace(tmp_path, step_module, monkeypatch, dispatch_
 
 
 def test_execute_member_constitution_in_args(tmp_path, step_module, monkeypatch, dispatch_calls):
-    """Configured constitutions ride in the dispatch args, per member."""
+    """Every dispatch receives its governance bundle as the second token."""
     central = write_workspace(
         tmp_path,
         members=[
@@ -361,18 +361,27 @@ def test_execute_member_constitution_in_args(tmp_path, step_module, monkeypatch,
     )
 
     assert result.status == step_module.StepStatus.COMPLETED
+    governance = central / "specs" / "001-demo" / "governance"
     by_args = {c["member"]: c for c in dispatch_calls}
-    assert by_args[S3]["args"] == f"tasks/s3.md {constitution}"
-    assert by_args[LAMBDA]["args"] == "tasks/lambda.md"  # no constitution configured
+    assert by_args[S3]["args"] == f"tasks/s3.md {governance / 's3.md'}"
+    # The bundle protocol is uniform: dispatched even without a configured
+    # constitution, so the agent never has to guess which layers exist.
+    assert by_args[LAMBDA]["args"] == f"tasks/lambda.md {governance / 'lambda.md'}"
+    assert "# s3 type rules" in (governance / "s3.md").read_text(encoding="utf-8")
+    lambda_text = (governance / "lambda.md").read_text(encoding="utf-8")
+    assert "Layer 2" in lambda_text
+    assert "Not present" in lambda_text
     per_repo = {r["repo"]: r for r in result.output["results"]}
     assert per_repo["s3"]["constitution"] == str(constitution)
+    assert per_repo["s3"]["governance"] == str(governance / "s3.md")
     assert per_repo["lambda"]["constitution"] is None
+    assert per_repo["lambda"]["governance"] == str(governance / "lambda.md")
 
 
 def test_execute_parallel_members_get_their_own_constitution(
     tmp_path, step_module, monkeypatch, dispatch_calls
 ):
-    """Concurrent waves each receive their own path (args, not shared env)."""
+    """Concurrent waves each receive their own bundle (args, not shared env)."""
     central = write_workspace(
         tmp_path,
         members=[
@@ -401,8 +410,153 @@ def test_execute_parallel_members_get_their_own_constitution(
 
     assert result.status == step_module.StepStatus.COMPLETED
     by_args = {c["member"]: c for c in dispatch_calls}
-    assert by_args[S3]["args"].endswith("constitutions/s3.md")
-    assert by_args[GLUE]["args"].endswith("constitutions/glue.md")
+    assert by_args[S3]["args"].endswith("governance/s3.md")
+    assert by_args[GLUE]["args"].endswith("governance/glue.md")
+    governance = central / "specs" / "001-demo" / "governance"
+    assert "# s3" in (governance / "s3.md").read_text(encoding="utf-8")
+    assert "# glue" in (governance / "glue.md").read_text(encoding="utf-8")
+
+
+def test_execute_governance_bundle_assembles_all_layers(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """Workspace, member/type, and local layers all land in the bundle."""
+    central = write_workspace(
+        tmp_path,
+        members=[{"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"}],
+    )
+    member = make_member(tmp_path, "s3")
+    make_feature(central, task_files={"s3": ""})
+    memory = central / ".specify" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "constitution.md").write_text("# workspace rules\n", encoding="utf-8")
+    constitution = central / "constitutions" / "s3.md"
+    constitution.parent.mkdir()
+    constitution.write_text("# s3 type rules\n", encoding="utf-8")
+    local_memory = member / ".specify" / "memory"
+    local_memory.mkdir(parents=True)
+    (local_memory / "constitution.md").write_text("# s3 local rules\n", encoding="utf-8")
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    bundle = central / "specs" / "001-demo" / "governance" / "s3.md"
+    text = bundle.read_text(encoding="utf-8")
+    assert "## Layer 1 — Workspace constitution" in text
+    assert "# workspace rules" in text
+    assert "## Layer 2 — Member/type constitution" in text
+    assert "# s3 type rules" in text
+    assert "## Layer 3 — Local constitution" in text
+    assert "# s3 local rules" in text
+    # The dispatch received the bundle, not the raw constitution path.
+    assert dispatch_calls[0]["args"] == f"tasks/s3.md {bundle}"
+
+
+def test_execute_governance_bundle_without_any_layers(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """No constitutions anywhere: the bundle is still written and dispatched."""
+    central = write_workspace(tmp_path, members=[{"id": "s3", "path": "repo-s3"}])
+    make_member(tmp_path, "s3")
+    make_feature(central, task_files={"s3": ""})
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    bundle = central / "specs" / "001-demo" / "governance" / "s3.md"
+    assert bundle.read_text(encoding="utf-8").count("Not present") == 3
+    assert dispatch_calls[0]["args"].endswith("governance/s3.md")
+
+
+def test_execute_template_constitution_is_reported_absent(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """A local layer still holding the specify init template defines nothing."""
+    central = write_workspace(tmp_path, members=[{"id": "s3", "path": "repo-s3"}])
+    member = make_member(tmp_path, "s3")
+    make_feature(central, task_files={"s3": ""})
+    local_memory = member / ".specify" / "memory"
+    local_memory.mkdir(parents=True)
+    (local_memory / "constitution.md").write_text(
+        "# [PROJECT_NAME] Constitution\n[PRINCIPLE_1_DESCRIPTION]\n",
+        encoding="utf-8",
+    )
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.COMPLETED
+    bundle = central / "specs" / "001-demo" / "governance" / "s3.md"
+    text = bundle.read_text(encoding="utf-8")
+    assert "## Layer 3" in text
+    assert "Not present" in text.split("## Layer 3")[1]
+    assert "[PRINCIPLE_1_DESCRIPTION]" not in text  # template noise never dispatched
+
+
+def test_execute_unreadable_constitution_blocks_dispatch(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """A constitution that exists but cannot be read fails before any dispatch."""
+    central = write_workspace(
+        tmp_path,
+        members=[{"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"}],
+    )
+    make_member(tmp_path, "s3")
+    make_feature(central, task_files={"s3": ""})
+    constitution = central / "constitutions" / "s3.md"
+    constitution.parent.mkdir()
+    constitution.write_bytes(b"# s3 type rules \xff\xfe\n")  # invalid UTF-8
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = step_module.MultiRepoImplementStep().execute(
+        {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+        make_context(step_module, central),
+    )
+
+    assert result.status == step_module.StepStatus.FAILED
+    assert dispatch_calls == []  # fail fast before any dispatch
+    assert "Cannot read the member constitution" in (result.error or "")
+    assert "s3" in (result.error or "")
+
+
+def test_execute_unwritable_bundle_fails_that_member(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    """A bundle that cannot be written fails the member instead of raising."""
+    central = write_workspace(
+        tmp_path,
+        members=[{"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"}],
+    )
+    make_member(tmp_path, "s3")
+    feature = make_feature(central, task_files={"s3": ""})
+    (central / "constitutions").mkdir()
+    (central / "constitutions" / "s3.md").write_text("# s3\n", encoding="utf-8")
+    feature.chmod(0o555)  # governance/ cannot be created inside the feature dir
+    patch_integration(monkeypatch, dispatch_calls)
+    try:
+        result = step_module.MultiRepoImplementStep().execute(
+            {"id": "i", "type": "multi-repo-implement", "feature": "specs/001-demo"},
+            make_context(step_module, central),
+        )
+
+        assert result.status == step_module.StepStatus.FAILED
+        assert dispatch_calls == []  # the agent never ran without its bundle
+        per_repo = {r["repo"]: r for r in result.output["results"]}
+        assert per_repo["s3"]["status"] == "failed"
+        assert "governance bundle failed" in (per_repo["s3"]["error"] or "")
+    finally:
+        feature.chmod(0o755)
 
 
 def test_execute_missing_constitution_blocks_dispatch(

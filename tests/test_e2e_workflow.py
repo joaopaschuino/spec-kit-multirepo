@@ -142,10 +142,12 @@ def test_install_run_and_resume(central):
 
     log = read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))
     assert len(log) == 2
-    # s3 carries its workspace constitution; lambda has none configured.
+    # s3 carries its governance bundle (all constitution layers assembled by
+    # the orchestrator); lambda gets its own bundle too (uniform protocol).
     assert "tasks/s3.md" in log[0]["args"]
-    assert "constitutions/s3.md" in log[0]["args"]
-    assert log[1]["args"].endswith("tasks/lambda.md")
+    assert "governance/s3.md" in log[0]["args"]
+    assert "governance/lambda.md" in log[1]["args"]
+    assert "# s3 type rules" in (feature / "governance" / "s3.md").read_text(encoding="utf-8")
     s3_call = log[0]
     assert s3_call["cwd"] == str(root / "repo-s3")
     # claude is a skills integration: the extension command's native
@@ -180,8 +182,8 @@ def test_install_run_and_resume(central):
     assert len(log) == 4
     for s3_call, lambda_call in ((log[0], log[1]), (log[2], log[3])):
         assert "tasks/s3.md" in s3_call["args"]
-        assert "constitutions/s3.md" in s3_call["args"]
-        assert lambda_call["args"].endswith("tasks/lambda.md")
+        assert "governance/s3.md" in s3_call["args"]
+        assert "governance/lambda.md" in lambda_call["args"]
 
 
 def test_multi_repo_check_reports_without_dispatch(central):
@@ -233,8 +235,8 @@ def test_missing_skip_dispatches_ready_members(central):
     assert result.exit_code == 0, result.output  # run completes with skips
 
     log = read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))
-    # s3 dispatched (its tasks file is among the args; the constitution path
-    # follows), lambda skipped as missing.
+    # s3 dispatched (its tasks file and governance bundle are among the
+    # args), lambda skipped as missing.
     tasks_args = [[t for t in r["args"].split(" ") if t.startswith("tasks/")] for r in log]
     assert tasks_args == [["tasks/s3.md"]]
 

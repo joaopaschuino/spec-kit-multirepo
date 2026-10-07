@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: multi-repo
   name: "Multi-Repo Workspace Orchestration"
-  version: "0.3.0"
+  version: "0.4.0"
   description: "Orchestrate spec-driven implementation across a workspace: a central specs repository dispatches implementation to member repositories"
   author: "Joao Victor"
   repository: "https://github.com/joaopaschuino/spec-kit-multirepo"

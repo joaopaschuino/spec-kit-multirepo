@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-07
+
+### Added
+
+- **Governance bundles**: before dispatching a member, the orchestrator
+  assembles every constitution layer that exists (workspace, member/type,
+  member-local) into one Markdown file per member under
+  `<feature>/governance/<member>.md`, and passes its absolute path as the
+  dispatched command's second argument. The member's agent reads one
+  authoritative file instead of resolving layer paths itself; the bundle
+  doubles as a per-dispatch audit artifact of exactly which rules each
+  member received
+- Fail-fast readability validation: a constitution file that exists but
+  cannot be read (permissions, encoding) fails the run before any dispatch
+- `install.sh member` now maintains a "Multi-repo workspace governance"
+  section in the member's `AGENTS.md` (idempotent, dedicated
+  `<!-- SPECKIT-MULTI-REPO:GOVERNANCE -->` markers): the persistent channel
+  that keeps free-form edits — which bypass the implement command — subject
+  to the workspace constitution layers
+- **Upgrading in place**: `install.sh` now replaces already-installed
+  components (`--force` on the extension and the custom step; workflows
+  overwrite by default), making a re-run the supported upgrade path —
+  documented in the README's new "Upgrading an existing workspace" section
+- `SPECIFY_BIN` environment variable on `install.sh`: point at a specific
+  `specify` binary when `PATH` carries one older than 1.1.0
+
+### Changed
+
+- Dispatch protocol: the second command argument is now the governance
+  bundle path (previously the member/type constitution path, only when
+  configured). The bundle is dispatched uniformly, even when no layer
+  exists, so the member command never has to guess which layers apply.
+  Upgrade the extension and the custom workflow step together
+- `speckit.multi-repo.implement`: governance step reads the bundle when
+  dispatched; the manual three-layer path resolution remains as the
+  standalone interactive fallback
+
+### Upgrade
+
+- Re-run the same `install.sh` command you used originally on the central
+  repository and on each member — it now upgrades in place (replaces the
+  extension and the custom step, re-adds the workflows, refreshes the
+  members' `AGENTS.md` governance section). Verify with
+  `specify workflow run multi-repo-check`
+
 ## [0.3.0] - 2026-10-04
 
 ### Added

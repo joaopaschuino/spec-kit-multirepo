@@ -59,18 +59,18 @@ In each **member repository**:
 
 ```sh
 specify extension add multi-repo --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.3.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.4.0.zip
 ```
 
 In the **central specs repository**, the two commands above plus:
 
 ```sh
 specify workflow step add multi-repo-implement --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.3.0/step-multi-repo-implement-v0.3.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.4.0/step-multi-repo-implement-v0.4.0.zip
 specify workflow add multi-repo --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.3.0/workflow/multi-repo/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.4.0/workflow/multi-repo/workflow.yml
 specify workflow add multi-repo-check --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.3.0/workflow/multi-repo-check/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.4.0/workflow/multi-repo-check/workflow.yml
 ```
 
 (The step install asks an interactive trust confirmation before downloading —
@@ -80,7 +80,7 @@ default-deny; answer `yes`.)
 
 ```sh
 ./install.sh central /path/to/central-repo                # local (--dev) mode
-./install.sh member  /path/to/member-repo --release v0.3.0 # release mode
+./install.sh member  /path/to/member-repo --release v0.4.0 # release mode
 ```
 
 `install.sh` runs, respectively:
@@ -89,6 +89,43 @@ default-deny; answer `yes`.)
 specify extension add <clone-dir> --dev
 specify workflow step add multi-repo-implement --dev <clone-dir>/step/multi-repo-implement
 specify workflow add <clone-dir>/workflow/multi-repo --dev
+```
+
+### Upgrading an existing workspace
+
+Re-run the same `install.sh` command you used originally — that is the
+supported upgrade path. Existing components are replaced in place (the
+extension and the custom step with `--force`; workflows overwrite by
+default) and the member's `AGENTS.md` governance section is refreshed
+idempotently. Nothing else in your repositories is touched; governance
+bundles are regenerated per dispatch, so there is nothing to migrate.
+
+```sh
+./install.sh central /path/to/central-repo --release v0.4.0   # or --dev <clone-dir>
+./install.sh member  /path/to/member-a --release v0.4.0
+./install.sh member  /path/to/member-b --release v0.4.0
+
+specify workflow run multi-repo-check   # verify: every member should report ready
+```
+
+Read the `Upgrade` section of the target version in the
+[CHANGELOG](CHANGELOG.md) first — some releases carry extra steps (for
+example manifest format changes).
+
+If your `PATH` carries a `specify` older than 1.1.0, point the script at the
+right binary: `SPECIFY_BIN=/path/to/specify ./install.sh …`.
+
+The manual equivalent, without `install.sh` (note the `--force` flags — a
+plain re-add fails on an existing installation):
+
+```sh
+# central
+specify extension add multi-repo --from <ext-zip-url> --force
+specify workflow step add multi-repo-implement --from <step-zip-url> --force
+specify workflow add multi-repo --from <workflow-url>
+specify workflow add multi-repo-check --from <check-workflow-url>
+# each member (plus the AGENTS.md governance section, via install.sh member)
+specify extension add multi-repo --from <ext-zip-url> --force
 ```
 
 ### Repository topologies
@@ -160,16 +197,16 @@ Dispatch details: each member's agent CLI runs headless (`claude -p …`,
 dispatch: `SPECIFY_FEATURE_DIRECTORY=<central feature dir>` and
 `SPECIFY_FEATURE_NO_PERSIST=1` (unless `persist_feature: true`). The member's
 tasks file is passed as the command argument, not as an environment variable,
-so concurrent waves cannot race on it — and when the member declares a
-`constitution`, its absolute path is appended as a second argument.
+so concurrent waves cannot race on it — followed by the member's governance
+bundle (all constitution layers assembled into one file), also as an argument.
 
 ## Constitutions
 
 Governance lives in the central repository and is consumed live at dispatch
-time — one source of truth, no copies to synchronize. The member's
-implementation command reads every layer that exists; when layers conflict,
-**the most restrictive rule wins** (each layer narrows the one above, never
-loosens it):
+time — one source of truth, no copies to synchronize. The orchestrator reads
+every layer that exists, assembles it into a **governance bundle**, and hands
+the bundle to the member's agent; when layers conflict, **the most
+restrictive rule wins** (each layer narrows the one above, never loosens it):
 
 1. **Workspace** — `central/.specify/memory/constitution.md`: rules true for
    the whole platform (edited with `/speckit.constitution` in the central
@@ -183,16 +220,27 @@ loosens it):
 3. **Local** — `member/.specify/memory/constitution.md`: repo-specific
    exceptions only
 
-The orchestrator validates configured constitution files before dispatching
-(a missing file fails the run with the path in the error) and hands each
-member its constitution path as part of the dispatched command, so concurrent
-members each receive their own. Later steps of the member's completion report
-name which layers applied and any rule that overrode a task.
+At dispatch time the orchestrator validates every configured constitution
+file (a missing or unreadable file fails the run, with the path in the
+error), embeds all three layers in `<feature>/governance/<member>.md`, and
+passes that bundle's absolute path to the member's command — so the agent
+reads one authoritative file instead of resolving layer paths itself, and
+the bundle doubles as an audit record of exactly which rules each member
+received. A layer that is still the unmodified `specify init` template is
+reported as absent, so placeholder text never reaches a dispatched agent as
+if it were governance. Later steps of the member's completion report name
+which layers applied and any rule that overrode a task.
+
+Members also carry a persistent pointer in their `AGENTS.md` (written by
+`install.sh member`, idempotent) naming the three layers and the
+most-restrictive-wins rule — the channel that keeps free-form edits, which
+bypass the implement command entirely, subject to governance.
 
 Resume semantics: the engine re-executes the step from the top on
 `workflow resume`. That is safe because re-dispatching a member whose tasks
 are complete is a no-op for the agent, and `skip_completed` avoids even that
-dispatch.
+dispatch. Bundles are regenerated on every dispatch, so a resumed member
+always receives the current rules.
 
 ## Usage walkthrough
 
@@ -277,6 +325,8 @@ member repositories are only destinations for implementation**.
 - The extension: `.specify/extensions/multi-repo/` + the hook registry in
   `.specify/extensions.yml`
 - The agent commands (for example `.claude/skills/speckit-multi-repo-implement`)
+- A "Multi-repo workspace governance" section in `AGENTS.md` (idempotent,
+  marker-delimited; written by `install.sh member`)
 
 **In members — during a feature (runtime):**
 
@@ -300,8 +350,9 @@ It is off by default to keep members clean and allow concurrent dispatches
 without state races.
 
 **In the central repository:** the feature (`spec.md`, `plan.md`,
-orchestration `tasks.md`, per-member task files, `contracts/`), the
-workspace manifest, shared constitutions, and the workflow run history.
+orchestration `tasks.md`, per-member task files, `contracts/`, and the
+derived `governance/` bundles), the workspace manifest, shared
+constitutions, and the workflow run history.
 
 ## Design notes — the path to a native feature (Route C)
 
@@ -323,10 +374,13 @@ an upstream RFC.
 
 ## Limitations (v1)
 
-- Constitution layers are prompt-level governance (like the Spec Kit core):
-  enforcement happens through the implementing agent, not a mechanical
-  validator; member-local constitutions live in the member repo by design
-  (only workspace and type layers are centralized)
+- Constitution enforcement still happens through the implementing agent:
+  the orchestrator now delivers the rules mechanically (bundles assembled
+  at dispatch, persistent `AGENTS.md` pointer in members) instead of trusting
+  the agent to resolve layer paths, but whether a rule was followed is judged
+  by the agent, not a validator; member-local constitutions live in the
+  member repo by design (their content is embedded in the dispatch-time
+  bundle; only workspace and type layers are centralized sources of truth)
 - No automatic cross-repo contract synchronization: follow the
   [contract-driven development guide](https://github.com/github/spec-kit/blob/main/docs/guides/contract-driven-development.md)
   and keep contracts under the feature's `contracts/` directory
@@ -367,5 +421,7 @@ gh release create vX.Y.Z dist/step-multi-repo-implement-vX.Y.Z.zip --title vX.Y.
 The extension installs straight from the tag archive; the custom step ships
 as a dedicated release asset because `specify workflow step add --from`
 expects `step.yml` at the archive root. Update `extension.yml` version,
-`CHANGELOG.md`, and the README install URLs together (semver).
+`CHANGELOG.md`, and the README install URLs together (semver). Before
+tagging, smoke-test both install paths on a scratch workspace: a fresh
+`install.sh` run and a re-run over an existing install (the upgrade path).
 

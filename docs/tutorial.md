@@ -90,11 +90,12 @@ cat > central/constitutions/lambda.md <<'EOF'
 EOF
 ```
 
-At dispatch time each member's agent reads, in order, the workspace
-constitution → this type constitution (its path is validated and passed by
-the orchestrator) → the member's own `.specify/memory/constitution.md`, with
-the most restrictive rule winning. A configured but missing constitution
-file fails the run before any dispatch.
+At dispatch time the orchestrator reads every layer that exists — the
+workspace constitution, this type constitution, and the member's own
+`.specify/memory/constitution.md` — assembles them into a governance bundle
+(`<feature>/governance/<member>.md`), and passes the bundle to the member's
+agent, with the most restrictive rule winning. A configured but missing (or
+unreadable) constitution file fails the run before any dispatch.
 
 > **Tip**: instead of writing the manifest by hand, run
 > `/speckit.multi-repo.workspace` in the central repo — it scans sibling
