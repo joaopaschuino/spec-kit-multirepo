@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: multi-repo
   name: "Multi-Repo Workspace Orchestration"
-  version: "0.4.0"
+  version: "0.5.0"
   description: "Orchestrate spec-driven implementation across a workspace: a central specs repository dispatches implementation to member repositories"
   author: "Joao Victor"
   repository: "https://github.com/joaopaschuino/spec-kit-multirepo"
@@ -24,6 +24,9 @@ provides:
     - name: speckit.multi-repo.workspace
       file: commands/speckit.multi-repo.workspace.md
       description: "Scaffold or audit the workspace manifest against the local filesystem (run in the central specs repository)"
+    - name: speckit.multi-repo.help
+      file: commands/speckit.multi-repo.help.md
+      description: "Explain the Spec Kit and multi-repo flows and recommend the next command for this repository's role and feature state (run in any workspace repository)"
 
   config:
     - name: "multi-repo-config.yml"

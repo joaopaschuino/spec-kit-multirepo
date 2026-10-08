@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-07
+
+### Added
+
+- `speckit.multi-repo.help` agent command, installed with the extension in
+  the central and every member repository: answers orientation questions in
+  the agent chat — where to start with an idea, which command runs next for
+  the current repository and feature state, how waves, resume, and
+  governance work. It detects the repository's role (central / member /
+  pre-scaffold project) and the active feature state before answering, and
+  is read-only: it explains and recommends, never dispatches workflows or
+  edits files
+
 ## [0.4.0] - 2026-10-07
 
 ### Added

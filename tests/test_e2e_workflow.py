@@ -280,6 +280,7 @@ def test_extension_installs_and_registers_commands(tmp_path, fake_agent, monkeyp
     skills = member / ".claude" / "skills"
     assert (skills / "speckit-multi-repo-implement").exists()
     assert (skills / "speckit-multi-repo-tasks").exists()
+    assert (skills / "speckit-multi-repo-help").exists()
     hooks = (member / ".specify" / "extensions.yml").read_text(encoding="utf-8")
     assert "after_tasks" in hooks
     assert "speckit.multi-repo.tasks" in hooks

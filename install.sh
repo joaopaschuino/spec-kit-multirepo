@@ -17,7 +17,7 @@
 #
 # Sources:
 #   --dev <dir>   local package directory (default: this script's directory)
-#   --release V   GitHub release tag, e.g. v0.4.0 — installs from the
+#   --release V   GitHub release tag, e.g. v0.5.0 — installs from the
 #                 published release artifacts
 #
 # Environment:

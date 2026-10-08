@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "multi-repo"
   name: "Multi-Repo Implementation"
-  version: "0.4.0"
+  version: "0.5.0"
   author: "Joao Victor"
   description: "Dispatches implementation of a centrally-specified feature to workspace member repositories in dependency order"
 

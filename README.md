@@ -59,18 +59,18 @@ In each **member repository**:
 
 ```sh
 specify extension add multi-repo --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.4.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.5.0.zip
 ```
 
 In the **central specs repository**, the two commands above plus:
 
 ```sh
 specify workflow step add multi-repo-implement --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.4.0/step-multi-repo-implement-v0.4.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.5.0/step-multi-repo-implement-v0.5.0.zip
 specify workflow add multi-repo --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.4.0/workflow/multi-repo/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.5.0/workflow/multi-repo/workflow.yml
 specify workflow add multi-repo-check --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.4.0/workflow/multi-repo-check/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.5.0/workflow/multi-repo-check/workflow.yml
 ```
 
 (The step install asks an interactive trust confirmation before downloading —
@@ -80,7 +80,7 @@ default-deny; answer `yes`.)
 
 ```sh
 ./install.sh central /path/to/central-repo                # local (--dev) mode
-./install.sh member  /path/to/member-repo --release v0.4.0 # release mode
+./install.sh member  /path/to/member-repo --release v0.5.0 # release mode
 ```
 
 `install.sh` runs, respectively:
@@ -101,9 +101,9 @@ idempotently. Nothing else in your repositories is touched; governance
 bundles are regenerated per dispatch, so there is nothing to migrate.
 
 ```sh
-./install.sh central /path/to/central-repo --release v0.4.0   # or --dev <clone-dir>
-./install.sh member  /path/to/member-a --release v0.4.0
-./install.sh member  /path/to/member-b --release v0.4.0
+./install.sh central /path/to/central-repo --release v0.5.0   # or --dev <clone-dir>
+./install.sh member  /path/to/member-a --release v0.5.0
+./install.sh member  /path/to/member-b --release v0.5.0
 
 specify workflow run multi-repo-check   # verify: every member should report ready
 ```
@@ -268,6 +268,15 @@ Inside a member repo, `/speckit.multi-repo.implement` also works standalone
 (interactively) — it resolves the feature via `SPECIFY_FEATURE_DIRECTORY` or
 the member's persisted `feature.json`, and the member's task file via
 argument, `SPECKIT_MULTI_REPO_TASKS_FILE`, or the extension config.
+
+## Help
+
+`/speckit.multi-repo.help` — installed with the extension in the central and
+every member repository — answers orientation questions in the agent chat,
+in your language: where to start with an idea, which command runs next for
+the current repository and feature state, how waves, resume, and governance
+work. It detects the repository's role before answering, and it is
+read-only: it explains and recommends, never dispatches or edits.
 
 ## Workspace check & scaffolding
 
