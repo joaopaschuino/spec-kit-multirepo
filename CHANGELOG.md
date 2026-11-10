@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-10
+
+### Added
+
+- **Objective verification (router/worker)**: member task files end with a
+  `## Verification` section — POSIX commands for lint, type-check, test, and
+  e2e with their expected exit codes (`- test: `npm test` → exit 0`).
+  `/speckit.multi-repo.tasks` generates it from each member's real tooling
+  and preserves it on re-runs like checkbox state. After each member's
+  dispatch the step runs every command in the member repository (`sh`,
+  `cwd` = member repo, feature axis exported), logs the output to
+  `<feature>/verification/<member>.log`, and records a per-member
+  `verification` result (`verified` | `failed` | `skipped`) in the step
+  output; a member whose checks fail is `failed`. The run summary is written
+  to `<feature>/verification/report.md`
+- `verify_retries: N` step option (default `0`; also a `multi-repo` workflow
+  input): a failed verification re-dispatches the member's agent up to N
+  more times with a feedback file (failing commands, exit codes, output)
+  passed as a third command argument
+- **Contract-check members**: a task file with a Verification section and no
+  task checkboxes is verification-only — no agent is dispatched, its
+  commands run after its `depends_on` producers, and its path only has to
+  exist (a plain consumer or contracts repository). README example and a
+  `tasks/contract-check.md` template in `/speckit.multi-repo.tasks` for
+  features with contracts between members (schema diff, consumer-driven
+  contract tests against the feature's `contracts/`)
+- The step keeps the Status column of the orchestration page
+  (`<feature>/tasks.md`) current: `pending → dispatched → verified |
+  completed | failed`
+- `ready: false` in a member task file's front matter holds that member —
+  and its dependents — back (`status: not-ready`, output `not_ready`), so a
+  feature can be dispatched in subsets
+- The `multi-repo` review gate shows the verification summary and report
+
+### Changed
+
+- `dispatch_timeout` now bounds sequential (streamed) dispatches too, via a
+  watchdog — previously only parallel waves were time-bounded. A timed-out
+  member is `failed` with `timed_out: true`. Verification commands share
+  the same bound
+- With `skip_completed`, a checked-off member that has Verification commands
+  is skipped only when its checks pass; otherwise it is re-dispatched with
+  feedback
+- `speckit.multi-repo.implement` runs the task file's Verification commands
+  during validation, reads the retry feedback file when present, and must
+  never weaken the Verification section
+
 ## [0.5.0] - 2026-10-07
 
 ### Added

@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "multi-repo"
   name: "Multi-Repo Implementation"
-  version: "0.5.0"
+  version: "0.6.0"
   author: "Joao Victor"
   description: "Dispatches implementation of a centrally-specified feature to workspace member repositories in dependency order"
 
@@ -22,6 +22,14 @@ inputs:
     type: string
     required: false
     prompt: "How to treat participants missing locally: error (default, aborts) or skip (dispatch the ready members)"
+  verify_retries:
+    type: string
+    required: false
+    prompt: "Re-dispatches per member after a failed verification, with the failure log attached (default 0)"
+  dispatch_timeout:
+    type: string
+    required: false
+    prompt: "Seconds before a member dispatch or verification command is killed (default 3600; applies to sequential and parallel waves)"
   confirm:
     type: string
     required: false
@@ -44,10 +52,13 @@ steps:
     feature: "{{ inputs.feature }}"
     dry_run: "{{ inputs.dry_run }}"
     missing: "{{ inputs.missing }}"
+    verify_retries: "{{ inputs.verify_retries }}"
+    dispatch_timeout: "{{ inputs.dispatch_timeout }}"
 
   - id: review
     type: gate
-    message: "Member dispatch finished. Review the per-member results above before completing the run."
+    message: "Member dispatch finished. Objective verification — {{ steps.implement.output.verification_summary }}. Review the verification report before completing the run."
+    show_file: "{{ steps.implement.output.verification_report }}"
     options: [approve, reject]
     on_reject: abort
     verdict_input: review

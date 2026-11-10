@@ -12,7 +12,7 @@ scripts:
 $ARGUMENTS
 ```
 
-You **MUST** consider the user input before proceeding (if not empty). When this command is dispatched by the multi-repo orchestrator, `$ARGUMENTS` contains the member's tasks file path **relative to the feature directory** (for example `tasks/lambda.md`) followed by the **absolute path to this member's governance bundle** — one file the orchestrator assembled from every constitution layer that exists. Read that bundle in full during the Governance step and treat it as authoritative.
+You **MUST** consider the user input before proceeding (if not empty). When this command is dispatched by the multi-repo orchestrator, `$ARGUMENTS` contains the member's tasks file path **relative to the feature directory** (for example `tasks/lambda.md`) followed by the **absolute path to this member's governance bundle** — one file the orchestrator assembled from every constitution layer that exists. Read that bundle in full during the Governance step and treat it as authoritative. On a **retry** a third token is present: the absolute path to a **verification feedback** file listing the objective checks that failed after the previous attempt, with their output — read it first and make those checks pass (see Validation).
 
 ## Purpose
 
@@ -110,13 +110,15 @@ This repository is a **member** of a multi-repo workspace. The active feature is
    - **IMPORTANT**: For completed tasks, mark the task as `[X]` in `FEATURE_DIR/TASKS_FILE` (the file lives in the central specs repository — write your checkbox updates there, not to a local copy)
 
 10. Validation:
-    - Run this repository's tests and linters; fix what the implementation broke
+    - If `FEATURE_DIR/TASKS_FILE` has a `## Verification` section, run every command listed there from this repository's root and fix the implementation until each exits with its expected code (default 0). The orchestrator re-runs these exact commands after you finish and decides from their exit codes whether this member is done — your report does not count. **Never edit, remove, or weaken the `## Verification` section** to make it pass
+    - If a verification feedback file was passed (third token of `$ARGUMENTS`), address every failing check it lists
+    - Otherwise run this repository's tests and linters; fix what the implementation broke
     - Verify the implementation matches `FEATURE_DIR/spec.md` for this member's scope
 
 11. Completion report:
     - Tasks completed / total from `FEATURE_DIR/TASKS_FILE`
     - Files created or modified in this repository
-    - Test and lint results
+    - Test and lint results, including each `## Verification` command and its exit code
     - Governance layers applied (which of the three existed in the governance bundle, or in the standalone fallback), and any rule that overrode a task
     - Any cross-repo contract consumed, and any checklist items left unchecked
 
