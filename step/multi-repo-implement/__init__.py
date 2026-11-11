@@ -15,12 +15,36 @@ Configuration (all fields optional)::
       repos: [s3, lambda]               # default: members with a tasks file
       command: speckit.multi-repo.implement
       max_concurrency: 1                # per-wave parallelism (stream=False)
-      dispatch_timeout: 3600            # seconds, parallel mode only
-    skip_completed: true              # skip members with all tasks checked
-    persist_feature: false            # write feature.json in members
-    stop_on_failure: true             # halt before the next wave on failure
-    dry_run: false                    # report member readiness, dispatch nothing
-    missing: error                    # error | skip for locally-absent members
+      dispatch_timeout: 3600            # seconds, every dispatch and check
+      skip_completed: true              # skip members with all tasks checked
+      persist_feature: false            # write feature.json in members
+      stop_on_failure: true             # halt before the next wave on failure
+      dry_run: false                    # report member readiness, dispatch nothing
+      missing: error                    # error | skip for locally-absent members
+      verify_retries: 0                 # re-dispatches after a failed verification
+
+**Objective verification.** After a member's dispatch, the commands listed in
+the ``## Verification`` section of its task file run in the member repository
+(POSIX ``sh``, ``cwd`` = member repo, feature axis exported). The member is
+``completed`` only when every command exits with its expected code; the
+per-member ``verification`` result is ``verified``, ``failed``, or
+``skipped`` (no section, or the dispatch itself failed). With
+``verify_retries: N`` a failed verification re-dispatches the member's agent
+up to N more times, with a feedback file (failing checks and their output)
+appended to the command arguments. A task file with a Verification section
+and no task checkboxes is a *verification-only* member (for example a
+contract check): no agent is dispatched, only the commands run, and only the
+member path has to exist.
+
+``dispatch_timeout`` bounds every agent dispatch — captured (parallel) and
+streamed (sequential) alike — and every verification command.
+
+The step keeps the Status column of the orchestration page
+(``<feature>/tasks.md``) current: ``dispatched`` before an agent runs, then
+``verified`` / ``completed`` / ``failed``. A task file whose YAML front matter
+sets ``ready: false`` is held back (``status: not-ready``), together with
+every participant that depends on it, so a feature can be dispatched in
+subsets.
 
 ``dry_run: true`` turns the step into a read-only workspace report: every
 declared member is classified (ready / not-cloned / not-initialized /
@@ -55,9 +79,12 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from specify_cli.workflows.base import StepBase, StepContext, StepResult, StepStatus
 from specify_cli.workflows.expressions import evaluate_expression
@@ -69,6 +96,17 @@ from .workspace import (
     load_workspace,
     read_feature_directory,
     workspace_waves,
+)
+from .verification import (
+    VERIFICATION_DIR,
+    has_task_checkboxes,
+    is_marked_ready,
+    kill_process_tree,
+    parse_verification,
+    run_verification,
+    update_orchestration_status,
+    write_feedback,
+    write_report,
 )
 
 DEFAULT_COMMAND = "speckit.multi-repo.implement"
@@ -113,6 +151,7 @@ _KNOWN_CONFIG_KEYS = {
     "dry_run",
     "missing",
     "model",
+    "verify_retries",
 }
 
 #: Statuses that mean "this teammate's machine lacks the member locally".
@@ -161,7 +200,7 @@ class MultiRepoImplementStep(StepBase):
 
         for field in ("max_concurrency", "dispatch_timeout"):
             value = config.get(field)
-            if value is None:
+            if value is None or (isinstance(value, str) and "{{" in value):
                 continue
             if (
                 isinstance(value, bool)
@@ -180,6 +219,16 @@ class MultiRepoImplementStep(StepBase):
                     f"Multi-repo-implement step {step_id}: '{field}' must be "
                     f"true or false, got {value!r}."
                 )
+
+        retries = config.get("verify_retries")
+        if retries is not None and not (
+            (isinstance(retries, str) and "{{" in retries)
+            or (isinstance(retries, int) and not isinstance(retries, bool) and retries >= 0)
+        ):
+            errors.append(
+                f"Multi-repo-implement step {step_id}: 'verify_retries' must be "
+                f"a non-negative integer, got {retries!r}."
+            )
 
         missing_value = config.get("missing")
         if missing_value is not None and (
@@ -265,9 +314,26 @@ class MultiRepoImplementStep(StepBase):
                 ),
             )
 
+        # Task files drive verification-only members and ``ready: false``
+        # holds; both need the feature directory.
+        task_texts = {
+            member.id: self._read_tasks(feature_dir / member.tasks_file)
+            for member in participants
+            if feature_dir is not None
+        }
+        verify_only = {
+            member_id
+            for member_id, text in task_texts.items()
+            if parse_verification(text) is not None and not has_task_checkboxes(text)
+        }
+        held = self._held_members(workspace, participants, task_texts)
+
         # 4. Member readiness classification (filesystem + integration).
-        classify_scope = list(workspace.members) if settings["dry_run"] else participants
-        report = self._classify_members(classify_scope, workspace.root)
+        if settings["dry_run"]:
+            classify_scope = list(workspace.members)
+        else:
+            classify_scope = [m for m in participants if m.id not in held]
+        report = self._classify_members(classify_scope, workspace.root, verify_only)
         participant_ids = {member.id for member in participants}
         output["members"] = []
         for member in classify_scope:
@@ -284,6 +350,11 @@ class MultiRepoImplementStep(StepBase):
                 entry["integration"] = classified["integration"]
             if member.constitution:
                 entry["constitution"] = str(member.constitution)
+            if member.id in verify_only:
+                entry["verify_only"] = True
+            if member.id in held:
+                entry["ready"] = False
+                entry["held_reason"] = held[member.id]
             if settings["dry_run"]:
                 entry["participant"] = member.id in participant_ids
             output["members"].append(entry)
@@ -304,13 +375,17 @@ class MultiRepoImplementStep(StepBase):
             ready_ids = [
                 member.id
                 for member in participants
-                if report[member.id]["status"] == "ready"
+                if report[member.id]["status"] == "ready" and member.id not in held
             ]
             output["dry_run"] = True
             output["waves"] = workspace_waves(workspace, ready_ids)
             output["results"] = []
             output["failed"] = []
             output["missing"] = [member.id for member in locally_missing]
+            output["not_ready"] = sorted(held)
+            output["verification"] = {}
+            output["verification_summary"] = "dry run: nothing dispatched or verified"
+            output["verification_report"] = ""
             return StepResult(status=StepStatus.COMPLETED, output=output)
 
         # Configuration errors abort in every mode: they are manifest/setup
@@ -337,7 +412,9 @@ class MultiRepoImplementStep(StepBase):
 
         # 6. Dependency waves over the ready members.
         ready = [
-            member for member in participants if report[member.id]["status"] == "ready"
+            member
+            for member in participants
+            if member.id not in held and report[member.id]["status"] == "ready"
         ]
         integration_keys = {
             member.id: report[member.id]["integration"] for member in ready
@@ -345,6 +422,7 @@ class MultiRepoImplementStep(StepBase):
         waves = workspace_waves(workspace, [member.id for member in ready])
         output["waves"] = waves
         output["missing"] = [member.id for member in locally_missing]
+        output["not_ready"] = sorted(held)
 
         # 7. Dispatch, wave by wave, with the feature axis exported.
         results: list[dict[str, Any]] = []
@@ -361,6 +439,7 @@ class MultiRepoImplementStep(StepBase):
                     feature_dir,
                     integration_keys,
                     workspace.root,
+                    verify_only,
                 ):
                     results.append(result)
                     if result["status"] == "failed":
@@ -385,14 +464,42 @@ class MultiRepoImplementStep(StepBase):
                     "exit_code": None,
                 }
             )
+        for member in participants:
+            if member.id in held:
+                results.append(
+                    {
+                        "repo": member.id,
+                        "wave": None,
+                        "tasks_file": member.tasks_file,
+                        "integration": None,
+                        "constitution": str(member.constitution) if member.constitution else None,
+                        "governance": None,
+                        "status": "not-ready",
+                        "reason": held[member.id],
+                        "exit_code": None,
+                    }
+                )
 
         output["results"] = results
         output["failed"] = failed
         output["stopped_after_wave"] = stopped_after_wave
+        verification = {
+            r["repo"]: r["verification"]["status"] for r in results if r.get("verification")
+        }
+        output["verification"] = verification
+        output["verification_summary"] = self._verification_summary(verification)
+        try:
+            output["verification_report"] = str(
+                write_report(feature_dir / VERIFICATION_DIR / "report.md", feature_dir, results)
+            )
+        except OSError:
+            output["verification_report"] = ""
 
         if failed:
             summary = ", ".join(
-                f"{r['repo']} (exit {r['exit_code']})" for r in results if r["status"] == "failed"
+                f"{r['repo']} ({self._failure_label(r)})"
+                for r in results
+                if r["status"] == "failed"
             )
             return StepResult(
                 status=StepStatus.FAILED,
@@ -426,6 +533,14 @@ class MultiRepoImplementStep(StepBase):
                 return default
             return coerced if coerced > 0 else default
 
+        def resolve_non_negative(value: Any) -> int:
+            resolved = resolve(value) if value is not None else None
+            try:
+                coerced = int(resolved)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return 0
+            return max(coerced, 0)
+
         repos = resolve(config.get("repos"))
         if isinstance(repos, str) and repos.strip():
             # Tolerate a comma-separated expression result.
@@ -445,12 +560,77 @@ class MultiRepoImplementStep(StepBase):
             "model": str(resolve(config.get("model")) or "").strip() or None,
             "max_concurrency": resolve_int(config.get("max_concurrency"), 1),
             "dispatch_timeout": resolve_int(config.get("dispatch_timeout"), 3600),
+            "verify_retries": resolve_non_negative(config.get("verify_retries")),
             "skip_completed": resolve_bool(config.get("skip_completed"), True),
             "persist_feature": resolve_bool(config.get("persist_feature"), False),
             "stop_on_failure": resolve_bool(config.get("stop_on_failure"), True),
             "dry_run": resolve_bool(config.get("dry_run"), False),
             "missing": missing,
         }
+
+    @staticmethod
+    def _read_tasks(tasks_path: Path) -> str:
+        try:
+            return tasks_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return ""
+
+    @staticmethod
+    def _held_members(
+        workspace: Workspace,
+        participants: list[Member],
+        task_texts: dict[str, str],
+    ) -> dict[str, str]:
+        """Members held back by ``ready: false``, with the reason.
+
+        A member whose task file front matter sets ``ready: false`` is held,
+        and so is every participant depending on it, directly or through
+        another held participant — a consumer or contract check never runs
+        ahead of a producer that was deliberately left out.
+        """
+        participant_ids = {member.id for member in participants}
+        held = {
+            member_id: "task file front matter sets 'ready: false'"
+            for member_id, text in task_texts.items()
+            if not is_marked_ready(text)
+        }
+        graph = {member.id: member.depends_on for member in workspace.members}
+        changed = True
+        while changed:
+            changed = False
+            for member in participants:
+                if member.id in held:
+                    continue
+                blockers = sorted(
+                    dep for dep in graph[member.id] if dep in held and dep in participant_ids
+                )
+                if blockers:
+                    held[member.id] = f"depends on not-ready member(s): {', '.join(blockers)}"
+                    changed = True
+        return held
+
+    @staticmethod
+    def _verification_summary(verification: dict[str, str]) -> str:
+        if not verification:
+            return "no member was verified"
+        groups: dict[str, list[str]] = {}
+        for member_id, status in verification.items():
+            groups.setdefault(status, []).append(member_id)
+        return "; ".join(
+            f"{status}: {', '.join(groups[status])}"
+            for status in ("verified", "failed", "skipped")
+            if status in groups
+        )
+
+    @staticmethod
+    def _failure_label(result: dict[str, Any]) -> str:
+        if result.get("timed_out"):
+            return "timed out"
+        verification = result.get("verification") or {}
+        if verification.get("status") == "failed":
+            failing = [c["name"] for c in verification.get("commands", []) if c["status"] != "passed"]
+            return f"verification failed: {', '.join(failing)}"
+        return f"exit {result['exit_code']}"
 
     @staticmethod
     def _participants(
@@ -472,6 +652,7 @@ class MultiRepoImplementStep(StepBase):
     def _classify_members(
         members: list[Member],
         workspace_root: Path,
+        verify_only: set[str] | frozenset[str] = frozenset(),
     ) -> dict[str, dict[str, Any]]:
         """Classify each member's dispatch readiness.
 
@@ -480,6 +661,8 @@ class MultiRepoImplementStep(StepBase):
         ``no-integration``, ``unknown-integration``, ``no-dispatch``, and
         ``constitution-missing``. ``ready`` entries carry the resolved
         integration key; every other entry carries an actionable reason.
+        Verification-only members dispatch no agent, so only their path has
+        to exist (it may be a plain repository, e.g. a contracts repo).
         """
         from specify_cli.integration_state import (
             default_integration_key,
@@ -494,6 +677,9 @@ class MultiRepoImplementStep(StepBase):
             if not member.path.is_dir():
                 entry["status"] = "not-cloned"
                 entry["reason"] = f"member path not found: {member.path}"
+                report[member.id] = entry
+                continue
+            if member.id in verify_only:
                 report[member.id] = entry
                 continue
             if not (member.path / ".specify").is_dir():
@@ -561,6 +747,7 @@ class MultiRepoImplementStep(StepBase):
         feature_dir: Path,
         integration_keys: dict[str, str],
         workspace_root: Path,
+        verify_only: set[str],
     ) -> list[tuple[Member, dict[str, Any]]]:
         concurrency = settings["max_concurrency"]
         if concurrency > 1 and len(wave_members) > 1:
@@ -576,6 +763,7 @@ class MultiRepoImplementStep(StepBase):
                             feature_dir,
                             integration_keys,
                             workspace_root,
+                            verify_only,
                         ),
                     )
                     for member in wave_members
@@ -585,7 +773,13 @@ class MultiRepoImplementStep(StepBase):
             (
                 member,
                 self._dispatch_member(
-                    member, wave_index, settings, feature_dir, integration_keys, workspace_root
+                    member,
+                    wave_index,
+                    settings,
+                    feature_dir,
+                    integration_keys,
+                    workspace_root,
+                    verify_only,
                 ),
             )
             for member in wave_members
@@ -599,6 +793,7 @@ class MultiRepoImplementStep(StepBase):
         feature_dir: Path,
         integration_keys: dict[str, str],
         workspace_root: Path,
+        verify_only: set[str],
     ) -> dict[str, Any]:
         from specify_cli.integrations import get_integration
 
@@ -612,16 +807,88 @@ class MultiRepoImplementStep(StepBase):
             "governance": None,
             "status": "failed",
             "exit_code": None,
+            "attempts": 0,
+            "verification": None,
         }
+        tasks_path = feature_dir / member.tasks_file
+        orchestration_page = feature_dir / "tasks.md"
+        commands = parse_verification(self._read_tasks(tasks_path)) or []
+        verification_dir = feature_dir / VERIFICATION_DIR
+        log_path = verification_dir / f"{member.id}.log"
+        feedback_path = verification_dir / f"{member.id}.feedback.md"
+        runs = 0
 
-        if settings["skip_completed"] and self._tasks_completed(feature_dir / member.tasks_file):
-            result["status"] = "skipped"
-            result["exit_code"] = 0
+        def set_status(status: str) -> None:
+            update_orchestration_status(orchestration_page, member.id, status)
+
+        def verify(label: str) -> dict[str, Any]:
+            nonlocal runs
+            runs += 1
+            outcome = run_verification(
+                commands,
+                cwd=member.path,
+                timeout=settings["dispatch_timeout"],
+                log_path=log_path,
+                attempt=runs,
+                label=label,
+            )
+            outcome["log"] = str(log_path)
+            outcome["runs"] = runs
+            result["verification"] = outcome
+            return outcome
+
+        def not_verified(reason: str) -> dict[str, Any]:
+            return {"status": "skipped", "reason": reason, "commands": []}
+
+        if commands:
+            try:
+                verification_dir.mkdir(parents=True, exist_ok=True)
+                log_path.write_text(f"# Verification log — {member.id}\n", encoding="utf-8")
+                feedback_path.unlink(missing_ok=True)
+            except OSError as exc:
+                result["error"] = f"cannot prepare verification log: {exc}"
+                set_status("failed")
+                return result
+
+        # Verification-only member (e.g. a contract check): no agent, just
+        # the objective checks.
+        if member.id in verify_only:
+            result["mode"] = "verify-only"
+            if not commands:
+                # An empty section proves nothing: never report it verified.
+                result["status"] = "skipped"
+                result["exit_code"] = 0
+                result["verification"] = not_verified("'## Verification' lists no command")
+                set_status("skipped")
+                return result
+            outcome = verify("verification-only member")
+            result["status"] = "completed" if outcome["status"] == "verified" else "failed"
+            set_status(outcome["status"])
             return result
+
+        feedback: Path | None = None
+        if settings["skip_completed"] and self._tasks_completed(tasks_path):
+            if not commands:
+                result["status"] = "skipped"
+                result["exit_code"] = 0
+                result["verification"] = not_verified("no '## Verification' section")
+                set_status("completed")
+                return result
+            # Checked-off tasks are the agent's claim; the checks decide.
+            outcome = verify("pre-check of a checked-off task file")
+            if outcome["status"] == "verified":
+                result["status"] = "skipped"
+                result["exit_code"] = 0
+                set_status("verified")
+                return result
+            feedback = write_feedback(
+                feedback_path, member.id, member.tasks_file, outcome, log_path
+            )
 
         impl = get_integration(key)
         if impl is None:
             result["error"] = "integration vanished between validation and dispatch"
+            set_status("failed")
             return result
 
         # Assemble the governance bundle: every constitution layer that
@@ -634,36 +901,95 @@ class MultiRepoImplementStep(StepBase):
             bundle = write_governance_bundle(member, workspace_root, feature_dir)
         except (OSError, WorkspaceError) as exc:
             result["error"] = f"governance bundle failed: {exc}"
+            set_status("failed")
             return result
         result["governance"] = str(bundle)
-        args = f"{member.tasks_file} {bundle}"
 
-        # Sequential waves stream agent output live; parallel waves capture
-        # (interleaved streams would be unreadable) under a timeout.
-        stream = settings["max_concurrency"] <= 1
-        try:
-            dispatch = impl.dispatch_command(
-                settings["command"],
-                args=args,
-                project_root=member.path,
-                model=settings["model"],
-                timeout=settings["dispatch_timeout"],
-                stream=stream,
+        max_attempts = 1 + (settings["verify_retries"] if commands else 0)
+        for attempt in range(1, max_attempts + 1):
+            result["attempts"] = attempt
+            set_status("dispatched")
+            args = f"{member.tasks_file} {bundle}"
+            if feedback is not None:
+                # Retry protocol: the third argument is the feedback file.
+                args = f"{args} {feedback}"
+            if not self._run_dispatch(impl, settings, member, args, result):
+                result["status"] = "failed"
+                if commands:
+                    result["verification"] = not_verified("dispatch failed")
+                set_status("failed")
+                return result
+            if not commands:
+                result["status"] = "completed"
+                result["verification"] = not_verified("no '## Verification' section")
+                set_status("completed")
+                return result
+            outcome = verify(f"after dispatch {attempt}")
+            if outcome["status"] == "verified":
+                result["status"] = "completed"
+                set_status("verified")
+                return result
+            feedback = write_feedback(
+                feedback_path, member.id, member.tasks_file, outcome, log_path
             )
+
+        failing = [c["name"] for c in result["verification"]["commands"] if c["status"] != "passed"]
+        result["status"] = "failed"
+        result["error"] = (
+            f"verification failed after {result['attempts']} dispatch(es): "
+            f"{', '.join(failing)} (log: {log_path})"
+        )
+        set_status("failed")
+        return result
+
+    @staticmethod
+    def _run_dispatch(
+        impl: Any,
+        settings: dict[str, Any],
+        member: Member,
+        args: str,
+        result: dict[str, Any],
+    ) -> bool:
+        """Dispatch the member's agent once; record exit code/error in *result*."""
+        # Sequential waves stream agent output live; parallel waves capture
+        # (interleaved streams would be unreadable). Both are bounded by
+        # dispatch_timeout: captured dispatches natively, streamed ones by
+        # the watchdog (the core does not time-bound streamed dispatches).
+        stream = settings["max_concurrency"] <= 1
+        timeout = settings["dispatch_timeout"]
+        result.pop("error", None)
+        result.pop("timed_out", None)
+        try:
+            with streaming_watchdog(timeout if stream else None):
+                dispatch = impl.dispatch_command(
+                    settings["command"],
+                    args=args,
+                    project_root=member.path,
+                    model=settings["model"],
+                    timeout=timeout,
+                    stream=stream,
+                )
+        except subprocess.TimeoutExpired:
+            result["exit_code"] = None
+            result["timed_out"] = True
+            result["error"] = f"dispatch timed out after {timeout}s (dispatch_timeout)"
+            return False
         except Exception as exc:  # noqa: BLE001 -- aggregate per member
             result["error"] = f"{type(exc).__name__}: {exc}"
-            return result
+            return False
 
         exit_code = dispatch.get("exit_code")
         result["exit_code"] = exit_code
+        if dispatch.get("timed_out"):
+            result["timed_out"] = True
+            result["error"] = f"dispatch timed out after {timeout}s (dispatch_timeout)"
+            return False
         if exit_code == 0:
-            result["status"] = "completed"
-        else:
-            result["status"] = "failed"
-            stderr = (dispatch.get("stderr") or "").strip()
-            if stderr:
-                result["error"] = stderr.splitlines()[-1]
-        return result
+            return True
+        stderr = (dispatch.get("stderr") or "").strip()
+        if stderr:
+            result["error"] = stderr.splitlines()[-1]
+        return False
 
     @staticmethod
     def _tasks_completed(tasks_path: Path) -> bool:
@@ -696,6 +1022,73 @@ class MultiRepoImplementStep(StepBase):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = previous
+
+
+@contextmanager
+def streaming_watchdog(timeout: float | None) -> Iterator[None]:
+    """Bound streamed agent dispatches by *timeout* seconds.
+
+    The core runs streamed dispatches with ``subprocess.run(...)`` and no
+    timeout (the user can Ctrl+C), which leaves an unattended sequential
+    run unbounded. While active, the timeout-less ``subprocess.run`` calls
+    made **by the current thread** are replaced by :func:`run_with_watchdog`:
+    the agent stays in the orchestrator's process group (terminal, Ctrl+C,
+    Ctrl+Z and hang-up behave as without the watchdog), and when *timeout*
+    elapses its process tree — descendants first, then the agent — is killed
+    and ``subprocess.TimeoutExpired`` is raised to the step. Calls from other
+    threads, and calls that already carry a timeout, are left untouched.
+    """
+    if timeout is None:
+        yield
+        return
+    original = subprocess.run
+    owner = threading.get_ident()
+
+    def guarded_run(*popenargs: Any, **kwargs: Any) -> Any:
+        if threading.get_ident() == owner and kwargs.get("timeout") is None:
+            return run_with_watchdog(*popenargs, timeout=timeout, **kwargs)
+        return original(*popenargs, **kwargs)
+
+    subprocess.run = guarded_run  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        subprocess.run = original  # type: ignore[assignment]
+
+
+def run_with_watchdog(
+    *popenargs: Any, timeout: float, **kwargs: Any
+) -> subprocess.CompletedProcess:
+    """``subprocess.run`` equivalent that kills the whole process tree.
+
+    ``subprocess.run`` kills only its direct child on timeout, so a build or
+    test process the agent spawned would keep writing to the member
+    repository after the member is marked failed. Here, on timeout (or an
+    interrupt such as Ctrl+C), the child's descendants are killed first,
+    then the child (see :func:`kill_process_tree`).
+    """
+    kwargs.pop("timeout", None)
+    stdin_data = kwargs.pop("input", None)
+    check = kwargs.pop("check", False)
+    if kwargs.pop("capture_output", False):
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
+    if stdin_data is not None:
+        kwargs["stdin"] = subprocess.PIPE
+    with subprocess.Popen(*popenargs, **kwargs) as proc:
+        try:
+            stdout, stderr = proc.communicate(stdin_data, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_process_tree(proc)
+            proc.wait()
+            raise subprocess.TimeoutExpired(proc.args, timeout) from None
+        except BaseException:
+            kill_process_tree(proc)
+            proc.wait()
+            raise
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, proc.args, stdout, stderr)
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
 
 def read_feature_directory_safe(project_root: Path) -> str:

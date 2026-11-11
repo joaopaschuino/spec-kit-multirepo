@@ -37,9 +37,16 @@ central specs repo                    member repos
    computed from `workspace.yml`. Each member's agent runs with its own repo
    as the working directory and the central feature directory exported via
    `SPECIFY_FEATURE_DIRECTORY`.
-4. The workflow's gates keep a human in the loop; `workflow resume` picks up
-   after a member failure, skipping members whose task files are fully
-   checked off.
+4. After each member's agent finishes, the step runs the `## Verification`
+   commands of its task file in the member repo: the member is done only if
+   every exit code matches (optionally re-dispatching the agent with the
+   failure log, `verify_retries`). Contract-check members verify cross-repo
+   contracts after their producers. The orchestration page's Status column
+   follows along (`dispatched → verified | failed`).
+5. The workflow's gates keep a human in the loop (the review gate shows the
+   verification report); `workflow resume` picks up after a member failure,
+   skipping members whose task files are fully checked off and whose checks
+   pass.
 
 ## Install
 
@@ -59,18 +66,18 @@ In each **member repository**:
 
 ```sh
 specify extension add multi-repo --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.5.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/archive/refs/tags/v0.6.0.zip
 ```
 
 In the **central specs repository**, the two commands above plus:
 
 ```sh
 specify workflow step add multi-repo-implement --from \
-  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.5.0/step-multi-repo-implement-v0.5.0.zip
+  https://github.com/joaopaschuino/spec-kit-multirepo/releases/download/v0.6.0/step-multi-repo-implement-v0.6.0.zip
 specify workflow add multi-repo --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.5.0/workflow/multi-repo/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.6.0/workflow/multi-repo/workflow.yml
 specify workflow add multi-repo-check --from \
-  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.5.0/workflow/multi-repo-check/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/spec-kit-multirepo/v0.6.0/workflow/multi-repo-check/workflow.yml
 ```
 
 (The step install asks an interactive trust confirmation before downloading —
@@ -80,7 +87,7 @@ default-deny; answer `yes`.)
 
 ```sh
 ./install.sh central /path/to/central-repo                # local (--dev) mode
-./install.sh member  /path/to/member-repo --release v0.5.0 # release mode
+./install.sh member  /path/to/member-repo --release v0.6.0 # release mode
 ```
 
 `install.sh` runs, respectively:
@@ -101,9 +108,9 @@ idempotently. Nothing else in your repositories is touched; governance
 bundles are regenerated per dispatch, so there is nothing to migrate.
 
 ```sh
-./install.sh central /path/to/central-repo --release v0.5.0   # or --dev <clone-dir>
-./install.sh member  /path/to/member-a --release v0.5.0
-./install.sh member  /path/to/member-b --release v0.5.0
+./install.sh central /path/to/central-repo --release v0.6.0   # or --dev <clone-dir>
+./install.sh member  /path/to/member-a --release v0.6.0
+./install.sh member  /path/to/member-b --release v0.6.0
 
 specify workflow run multi-repo-check   # verify: every member should report ready
 ```
@@ -177,8 +184,9 @@ dependents.
   repos: [s3, lambda]               # default: members with a tasks file
   command: speckit.multi-repo.implement
   max_concurrency: 1                # per-wave parallelism (captured output)
-  dispatch_timeout: 3600            # seconds, parallel mode only
-  skip_completed: true              # skip members whose tasks are all [x]
+  dispatch_timeout: 3600            # seconds, every dispatch (sequential and parallel) and every check
+  verify_retries: 0                 # re-dispatches after a failed verification, with the failure log
+  skip_completed: true              # skip members whose tasks are all [x] (and whose checks pass)
   persist_feature: false            # keep feature.json in members
   stop_on_failure: true             # halt before the next wave on failure
   dry_run: false                    # report readiness and waves, dispatch nothing
@@ -187,10 +195,15 @@ dependents.
 
 Output (usable in later steps / gates via `{{ steps.implement.output.* }}`):
 `feature`, `waves` (list of member-id lists), `results` (per-member
-`repo`, `wave`, `status` completed|failed|skipped|missing, `exit_code`,
-`tasks_file`), `failed`, `missing`, and `members` (the readiness report;
-every declared member on dry runs, with `status`, `reason`, `integration`,
-`constitution`, and `participant`).
+`repo`, `wave`, `status` completed|failed|skipped|missing|not-ready,
+`exit_code`, `tasks_file`, `attempts`, `timed_out`, and `verification` —
+`status` verified|failed|skipped plus each command's `exit_code`,
+`expected_exit`, `status`, and log tail), `failed`, `missing`, `not_ready`,
+`verification` (member id → verified|failed|skipped),
+`verification_summary` (one line), `verification_report` (path of the
+Markdown report the review gate shows), and `members` (the readiness
+report; every declared member on dry runs, with `status`, `reason`,
+`integration`, `constitution`, `participant`, and `verify_only`).
 
 Dispatch details: each member's agent CLI runs headless (`claude -p …`,
 `copilot -p … --yolo`, …) with `cwd` = the member repo. Environment for every
@@ -199,6 +212,106 @@ dispatch: `SPECIFY_FEATURE_DIRECTORY=<central feature dir>` and
 tasks file is passed as the command argument, not as an environment variable,
 so concurrent waves cannot race on it — followed by the member's governance
 bundle (all constitution layers assembled into one file), also as an argument.
+`dispatch_timeout` bounds every dispatch: parallel (captured) dispatches
+natively, sequential (streamed) ones through a watchdog that kills the agent
+process once the timeout elapses — the member is then `failed` with
+`timed_out: true`, so an unattended run never hangs on one agent.
+
+### Dispatch and objective verification (router / worker)
+
+The central repository is the router and each member's agent a worker; the
+router decides whether a worker is done from **exit codes, not from the
+agent's report**. Every member task file ends with a `## Verification`
+section (generated by `/speckit.multi-repo.tasks`, preserved on re-runs):
+
+```markdown
+## Verification
+
+- lint: `npm run lint` → exit 0
+- type-check: `npx tsc --noEmit` → exit 0
+- test: `npm test` → exit 0
+- e2e: `npm run test:e2e` → exit 0
+```
+
+For each member, in dependency-wave order, the step:
+
+1. sets the member's row in the orchestration page (`<feature>/tasks.md`)
+   to `dispatched` and dispatches its agent (task file, governance bundle);
+2. parses `## Verification` from the task file and runs every command with
+   POSIX `sh`, `cwd` = the member repository, and
+   `SPECIFY_FEATURE_DIRECTORY` exported — every command runs even after a
+   failure, each bounded by `dispatch_timeout`, output appended to
+   `<feature>/verification/<member>.log`;
+3. records `verification: verified` (all exit codes as expected), `failed`,
+   or `skipped` (no section / no commands, or the dispatch itself failed),
+   and sets the row's Status to `verified`, `failed`, or `completed`
+   (dispatched fine, nothing to verify);
+4. on a failed verification with `verify_retries: N`, writes
+   `<feature>/verification/<member>.feedback.md` (each failing command, its
+   exit code, and output tail) and re-dispatches the agent with that file as
+   a third argument — up to N more times. Default 0: fail immediately.
+
+A member that fails verification is `failed` like a failed dispatch:
+`stop_on_failure` halts before the next wave and `workflow resume` retries
+it. With `skip_completed`, a fully checked-off task file is no longer taken
+at its word: its checks run first, and the agent is re-dispatched (with
+feedback) if they fail. The run's summary lands in
+`<feature>/verification/report.md`, which the `multi-repo` workflow's
+review gate displays.
+
+**Dispatching subsets — `ready: false`.** A task file starting with YAML
+front matter
+
+```markdown
+---
+ready: false
+---
+```
+
+is held back (`status: not-ready`, listed in `not_ready`), and so is every
+participant that depends on it; the rest of the feature dispatches. Remove
+the flag and re-run to dispatch the remainder.
+
+### Cross-repo contract checks — verification-only members
+
+Contracts between members are verified by an ordinary workspace member
+whose task file has a `## Verification` section **and no task checkboxes**.
+Such a member is *verification-only*: no agent is dispatched, its commands
+run in its repository once the producers' wave has finished, and it only
+needs its `path` to exist (a plain contracts repo works — no Spec Kit
+scaffolding required). Point it at the consumer repository or at a
+dedicated contracts repository and list every producer in `depends_on`:
+
+```yaml
+members:
+  - id: api                         # producer
+    path: ../repo-api
+  - id: web                         # consumer
+    path: ../repo-web
+    depends_on: [api]
+  - id: contract-check              # verification-only member
+    path: ../repo-web               # consumer repo (or ../repo-contracts)
+    tasks_file: tasks/contract-check.md
+    depends_on: [api]               # every producer of the contract
+```
+
+`specs/<feature>/tasks/contract-check.md` (generated by
+`/speckit.multi-repo.tasks` when the feature has contracts between members):
+
+```markdown
+# Contract check — 001-orders
+
+Producers: api · Consumer: web · Contracts: `contracts/` (feature directory)
+
+## Verification
+
+- schema-diff: `npx @openapitools/openapi-diff "$SPECIFY_FEATURE_DIRECTORY/contracts/openapi.yaml" ../repo-api/openapi.yaml` → exit 0
+- consumer-contract: `npm run test:pact -- --pact-dir "$SPECIFY_FEATURE_DIRECTORY/contracts/pacts"` → exit 0
+```
+
+Waves: `[api]`, then `[web, contract-check]` — the contract is checked
+against what the producer actually built, and a break fails the run like
+any other member (resume after fixing the producer).
 
 ## Constitutions
 
@@ -351,6 +464,7 @@ Nothing else, by default:
 | Member's `.specify/feature.json` | Not written | The step runs with `persist_feature: false`, which sets `SPECIFY_FEATURE_NO_PERSIST=1` |
 | Workflow runs (`.specify/workflows/runs/`) | Central only | The orchestrator is the single status writer |
 | Spec/contract copies | None | The agent reads them live from the central repository |
+| Verification logs, retry feedback, report (`verification/`) | Central | Written by the orchestrator under the feature directory |
 
 **The one exception, opt-in:** `persist_feature: true` makes the member
 record the central feature directory in its `.specify/feature.json` — useful
@@ -360,7 +474,7 @@ without state races.
 
 **In the central repository:** the feature (`spec.md`, `plan.md`,
 orchestration `tasks.md`, per-member task files, `contracts/`, and the
-derived `governance/` bundles), the workspace manifest, shared
+derived `governance/` bundles and `verification/` logs), the workspace manifest, shared
 constitutions, and the workflow run history.
 
 ## Design notes — the path to a native feature (Route C)
@@ -386,11 +500,32 @@ an upstream RFC.
 - Constitution enforcement still happens through the implementing agent:
   the orchestrator now delivers the rules mechanically (bundles assembled
   at dispatch, persistent `AGENTS.md` pointer in members) instead of trusting
-  the agent to resolve layer paths, but whether a rule was followed is judged
-  by the agent, not a validator; member-local constitutions live in the
+  the agent to resolve layer paths. Objective checks (`## Verification`,
+  contract-check members) are validated mechanically by exit code, but a
+  constitution rule with no corresponding command is still applied by the
+  agent alone — encode the mandatory ones as Verification commands;
+  member-local constitutions live in the
   member repo by design (their content is embedded in the dispatch-time
   bundle; only workspace and type layers are centralized sources of truth)
-- No automatic cross-repo contract synchronization: follow the
+- Verification is only as strong as the commands in the task file: the
+  orchestrator checks exit codes and cannot tell a meaningful suite from a
+  trivial one, so review the generated `## Verification` sections. Commands
+  run in the member repository with the orchestrator's privileges — treat
+  task files like any other code you execute
+- The sequential-mode watchdog relies on the integration launching its agent
+  through `subprocess.run` (true for the Spec Kit base integration); a
+  custom integration that spawns processes differently is bounded only in
+  parallel mode. The agent stays in the orchestrator's process group, so
+  the terminal, Ctrl+C, Ctrl+Z and hang-ups behave as without the watchdog.
+  On timeout the agent is frozen and its process tree is killed —
+  descendants first (found through parent/child links, so also those that
+  moved to another process group or session), then the agent. Descendants
+  already re-parented to init (double-forked daemons, background services
+  detached with `&` from a shell that has since exited) are out of reach
+  and can survive the timeout. Parallel (captured) dispatches are bounded by
+  the core, which kills only the agent process
+- No automatic cross-repo contract synchronization (contract-check members
+  verify, they do not sync): follow the
   [contract-driven development guide](https://github.com/github/spec-kit/blob/main/docs/guides/contract-driven-development.md)
   and keep contracts under the feature's `contracts/` directory
 - No bundle/catalog packaging yet: install via `install.sh` (local paths) or

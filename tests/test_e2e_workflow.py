@@ -29,7 +29,10 @@ def fake_agent(tmp_path, monkeypatch):
     """A shell-script stand-in for the claude CLI.
 
     Appends one record per invocation to $FAKE_AGENT_LOG and exits 1 when a
-    ``fail-agent`` sentinel file exists in the working directory.
+    ``fail-agent`` sentinel file exists in the working directory. With a
+    ``fix-on-feedback`` sentinel, a retry dispatch (verification feedback
+    file among the args) creates ``fixed``; ``hang-agent`` makes it start a
+    background child that writes ``late-write`` after 4s, then hang.
     """
     log = tmp_path / "agent-log.jsonl"
     script = tmp_path / "fake-agent.sh"
@@ -43,6 +46,13 @@ def fake_agent(tmp_path, monkeypatch):
         "  printf 'no_persist=%s\\n' \"${SPECIFY_FEATURE_NO_PERSIST:-}\"\n"
         "  printf -- '---\\n'\n"
         "} >> \"$log\"\n"
+        "case \"$*\" in *feedback.md*)\n"
+        "  if [ -f fix-on-feedback ]; then : > fixed; fi ;;\n"
+        "esac\n"
+        "if [ -f hang-agent ]; then\n"
+        "  ( sleep 4; : > late-write ) &\n"
+        "  sleep 30\n"
+        "fi\n"
         "if [ -f fail-agent ]; then\n"
         "  exit 1\n"
         "fi\n"
@@ -284,3 +294,148 @@ def test_extension_installs_and_registers_commands(tmp_path, fake_agent, monkeyp
     hooks = (member / ".specify" / "extensions.yml").read_text(encoding="utf-8")
     assert "after_tasks" in hooks
     assert "speckit.multi-repo.tasks" in hooks
+
+
+def run_multi_repo(root, feature, *extra):
+    argv = [
+        "workflow", "run", "multi-repo",
+        "-i", "confirm=approve",
+        "-i", "review=approve",
+        "-i", f"feature={feature.relative_to(root).as_posix()}",
+    ]
+    for item in extra:
+        argv.extend(["-i", item])
+    return invoke_specify(argv)
+
+
+def test_verification_retry_status_and_review_gate(central):
+    """Failed checks re-dispatch with feedback; Status column and gate follow."""
+    root, feature, lambda_repo = central
+    install_components()
+    (feature / "tasks.md").write_text(
+        "# Orchestration page\n\n"
+        "| Member | Task file | Depends on | Status |\n"
+        "|--------|-----------|------------|--------|\n"
+        "| s3 | tasks/s3.md | — | pending |\n"
+        "| lambda | tasks/lambda.md | s3 | pending |\n",
+        encoding="utf-8",
+    )
+    (feature / "tasks" / "s3.md").write_text(
+        "- [ ] s3 task\n\n## Verification\n\n- lint: `true` → exit 0\n", encoding="utf-8"
+    )
+    (feature / "tasks" / "lambda.md").write_text(
+        "- [ ] lambda task\n\n## Verification\n\n"
+        '- test: `test -f fixed && test "$SPECIFY_FEATURE_DIRECTORY" = "'
+        + str(feature)
+        + '"` → exit 0\n',
+        encoding="utf-8",
+    )
+    (lambda_repo / "fix-on-feedback").write_text("", encoding="utf-8")
+
+    result = run_multi_repo(root, feature, "verify_retries=1")
+    assert result.exit_code == 0, result.output
+
+    log = read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))
+    assert [r["cwd"] for r in log] == [
+        str(root / "repo-s3"),
+        str(lambda_repo),
+        str(lambda_repo),
+    ]
+    assert "lambda.feedback.md" in log[2]["args"]
+    assert "lambda.feedback.md" not in log[1]["args"]
+
+    state = read_run_state(root)
+    assert state["status"] == "completed"
+    output = state["step_results"]["implement"]["output"]
+    per_repo = {r["repo"]: r for r in output["results"]}
+    assert per_repo["s3"]["verification"]["status"] == "verified"
+    assert per_repo["lambda"]["verification"]["status"] == "verified"
+    assert per_repo["lambda"]["attempts"] == 2
+    assert output["verification"] == {"s3": "verified", "lambda": "verified"}
+
+    page = (feature / "tasks.md").read_text(encoding="utf-8")
+    assert "| s3 | tasks/s3.md | — | verified |" in page
+    assert "| lambda | tasks/lambda.md | s3 | verified |" in page
+
+    review = state["step_results"]["review"]["output"]
+    assert "verified: s3, lambda" in review["message"]
+    assert review["show_file"] == str(feature / "verification" / "report.md")
+    assert "| lambda | completed | verified | 2 | — |" in (
+        feature / "verification" / "report.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_verification_failure_fails_run_without_retries(central):
+    root, feature, _lambda_repo = central
+    install_components()
+    (feature / "tasks" / "s3.md").write_text(
+        "- [ ] s3 task\n\n## Verification\n\n- test: `exit 1`\n", encoding="utf-8"
+    )
+
+    result = run_multi_repo(root, feature)
+    assert result.exit_code == 1, result.output
+
+    assert len(read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))) == 1  # default: no retry
+    implement = read_run_state(root)["step_results"]["implement"]
+    assert implement["status"] == "failed"
+    s3 = {r["repo"]: r for r in implement["output"]["results"]}["s3"]
+    assert s3["status"] == "failed"
+    assert s3["verification"]["status"] == "failed"
+    assert (feature / "verification" / "s3.log").is_file()
+
+
+def test_sequential_dispatch_timeout_kills_hung_agent(central):
+    import time
+
+    root, feature, _lambda_repo = central
+    install_components()
+    (root / "repo-s3" / "hang-agent").write_text("", encoding="utf-8")
+
+    started = time.monotonic()
+    result = run_multi_repo(root, feature, "dispatch_timeout=2")
+    assert time.monotonic() - started < 25
+    assert result.exit_code == 1, result.output
+
+    implement = read_run_state(root)["step_results"]["implement"]
+    s3 = {r["repo"]: r for r in implement["output"]["results"]}["s3"]
+    assert s3["status"] == "failed"
+    assert s3["timed_out"] is True
+    assert "lambda" not in {r["repo"] for r in implement["output"]["results"]}
+    # The agent's descendants were killed with it: no write after the deadline.
+    time.sleep(max(0.0, started + 5 - time.monotonic()))
+    assert not (root / "repo-s3" / "late-write").exists()
+
+
+def test_contract_check_member_runs_after_producer(central):
+    root, feature, lambda_repo = central
+    install_components()
+    manifest_path = root / ".specify" / "workspace.yml"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["members"].append(
+        {
+            "id": "contract-check",
+            "path": "repo-lambda",
+            "tasks_file": "tasks/contract-check.md",
+            "depends_on": ["s3"],
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (feature / "contracts").mkdir()
+    (feature / "contracts" / "events.schema.json").write_text("{}", encoding="utf-8")
+    (feature / "tasks" / "contract-check.md").write_text(
+        "# Contract check\n\n## Verification\n\n"
+        '- schema: `test -f "$SPECIFY_FEATURE_DIRECTORY/contracts/events.schema.json"`\n'
+        "- producer-ran: `grep -q repo-s3 \"$FAKE_AGENT_LOG\"`\n",
+        encoding="utf-8",
+    )
+
+    result = run_multi_repo(root, feature)
+    assert result.exit_code == 0, result.output
+
+    output = read_run_state(root)["step_results"]["implement"]["output"]
+    assert output["waves"] == [["s3"], ["contract-check", "lambda"]]
+    check = {r["repo"]: r for r in output["results"]}["contract-check"]
+    assert check["mode"] == "verify-only"
+    assert check["verification"]["status"] == "verified"
+    # Only the two implementation members dispatched an agent.
+    assert len(read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))) == 2

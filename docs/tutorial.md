@@ -177,8 +177,13 @@ cat .specify/workflows/runs/<run-id>/state.json | jq '.step_results.implement.ou
 ```
 
 The step output records `waves`, per-member `results` (status, exit code,
-task file), and `failed`. In each member, `git status` shows the changes;
-in the central feature directory, the task checkboxes are marked.
+task file, and the `verification` result of the task file's
+`## Verification` commands), and `failed`. The orchestration page's Status
+column shows `verified` / `failed` per member, and
+`specs/<feature>/verification/` holds each member's check log plus the
+`report.md` the review gate displayed. In each member, `git status` shows
+the changes; in the central feature directory, the task checkboxes are
+marked.
 
 ## 7. Break it and resume it
 
