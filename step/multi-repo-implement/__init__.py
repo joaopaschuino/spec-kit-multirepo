@@ -49,8 +49,11 @@ subsets.
 ``dry_run: true`` turns the step into a read-only workspace report: every
 declared member is classified (ready / not-cloned / not-initialized /
 no-integration / unknown-integration / no-dispatch / constitution-missing),
-participation and waves are computed, and nothing is dispatched. The
-``multi-repo-check`` workflow wraps this mode as a workspace doctor.
+participation and waves are computed, and nothing is dispatched. Each member
+entry also carries its ``domain`` and ``communicates_with`` when declared, and
+``topology`` holds a Mermaid flowchart of the whole workspace (domains,
+dependency and communication edges). The ``multi-repo-check`` workflow wraps
+this mode as a workspace doctor.
 
 ``missing: skip`` supports teams where each member of the team has cloned
 only part of the workspace: participants that are not cloned locally (or not
@@ -95,6 +98,7 @@ from .workspace import (
     WorkspaceError,
     load_workspace,
     read_feature_directory,
+    topology_mermaid,
     workspace_waves,
 )
 from .verification import (
@@ -350,6 +354,10 @@ class MultiRepoImplementStep(StepBase):
                 entry["integration"] = classified["integration"]
             if member.constitution:
                 entry["constitution"] = str(member.constitution)
+            if member.domain:
+                entry["domain"] = member.domain
+            if member.communicates_with:
+                entry["communicates_with"] = list(member.communicates_with)
             if member.id in verify_only:
                 entry["verify_only"] = True
             if member.id in held:
@@ -379,6 +387,7 @@ class MultiRepoImplementStep(StepBase):
             ]
             output["dry_run"] = True
             output["waves"] = workspace_waves(workspace, ready_ids)
+            output["topology"] = topology_mermaid(workspace)
             output["results"] = []
             output["failed"] = []
             output["missing"] = [member.id for member in locally_missing]

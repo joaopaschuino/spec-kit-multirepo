@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Domain topology in the workspace manifest**: members accept optional
+  `domain` (business domain) and `communicates_with` (member ids the member
+  talks to at runtime). `communicates_with` must reference known members
+  other than the member itself, but may contain cycles — communication is
+  often bidirectional. `depends_on` remains the only execution graph
+  (acyclic; waves and `ready: false` holds are unchanged)
+- Dry runs (`multi-repo-check`) report each member's `domain` and
+  `communicates_with`, and a `topology` output: a Mermaid flowchart with one
+  subgraph per domain, dependency edges, and communication edges
+- `/speckit.multi-repo.domain` agent command (central repo): maps the domain
+  topology from evidence in member repositories — IaC, interface specs,
+  config, HTTP/messaging/storage clients, feature `contracts/` — as edges
+  with channel, direction, confidence, and `file:line`. `auto` sweeps every
+  member and proposes the whole map; `guided [<member>]` walks the flow
+  outward from one piece in a conversation where the user adds the domain
+  context. Writes `domain`/`communicates_with` after confirmation (never
+  `depends_on`) and `.specify/memory/domain.md` (diagram, communication
+  table, external systems, domain notes). `/speckit.multi-repo.tasks` and
+  `/speckit.multi-repo.workspace` point to it
 - **Mono-repo layout** documented (README *Repository topologies* →
   *Mono-repo*): the repository root is the central project and each stack
   is a member subdirectory (`path: apps/web`). No orchestrator change — a

@@ -590,8 +590,14 @@ def test_execute_dry_run_reports_without_dispatch(
     central = write_workspace(
         tmp_path,
         members=[
-            {"id": "s3", "path": "repo-s3"},
-            {"id": "lambda", "path": "repo-lambda", "depends_on": ["s3"]},
+            {"id": "s3", "path": "repo-s3", "domain": "ingestion"},
+            {
+                "id": "lambda",
+                "path": "repo-lambda",
+                "depends_on": ["s3"],
+                "domain": "ingestion",
+                "communicates_with": ["s3"],
+            },
         ],
     )
     make_member(tmp_path, "s3")  # ready
@@ -625,6 +631,14 @@ def test_execute_dry_run_reports_without_dispatch(
     assert members["lambda"]["reason"] == (
         f"member path not found: {(tmp_path / 'repo-lambda').resolve()}"
     )
+    assert members["s3"]["domain"] == "ingestion"
+    assert "communicates_with" not in members["s3"]
+    assert members["lambda"]["communicates_with"] == ["s3"]
+    assert 'subgraph d_0["ingestion"]' in result.output["topology"]
+    # s3 -> lambda is both a depends_on edge and a communicated pair: drawn once.
+    # s3 -> lambda is both a depends_on edge and a communicated pair: both drawn.
+    assert "m_s3 ==> m_lambda" in result.output["topology"]
+    assert "m_lambda -.-> m_s3" in result.output["topology"]
 
 
 def test_execute_dry_run_without_feature_reports_whole_workspace(

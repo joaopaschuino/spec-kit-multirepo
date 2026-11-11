@@ -26,7 +26,7 @@ This repository is the **central specs repository** of a multi-repo workspace. T
    `No workspace manifest found at .specify/workspace.yml. This command must run in the central specs repository of a multi-repo workspace (see the multi-repo extension README).`
    Note each member's `id`, `path`, `tasks_file` (default `tasks/<id>.md`), and `depends_on`.
 
-3. Read `FEATURE_DIR/tasks.md` (the task list produced by the standard tasks command) and, for context, `FEATURE_DIR/spec.md` and `FEATURE_DIR/plan.md` if they exist.
+3. Read `FEATURE_DIR/tasks.md` (the task list produced by the standard tasks command) and, for context, `FEATURE_DIR/spec.md` and `FEATURE_DIR/plan.md` if they exist. When `.specify/memory/domain.md` exists (written by `/speckit.multi-repo.domain`), read it too: the domain map says which members communicate over which channel, which helps assign integration tasks to the right owner and spot contract tasks.
 
 4. **Classify each task to a member** (or to "central"):
    - A task belongs to a member when its target files, services, or explicit mentions match that member (e.g. paths under the member's repository, its AWS resource types — Lambda, Glue, SQS, Step Functions — or a `repo: <id>` tag in the task text)

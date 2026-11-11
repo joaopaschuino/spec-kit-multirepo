@@ -105,6 +105,10 @@ unreadable) constitution file fails the run before any dispatch.
 > the `depends_on` graph), and audits an existing one afterwards. Verify
 > readiness at any time with `specify workflow run multi-repo-check` — a
 > read-only report of which members are ready, missing, or misconfigured.
+> To record *who talks to whom* (the manifest's `domain` and
+> `communicates_with`), run `/speckit.multi-repo.domain auto` for a full
+> scan of the members' code, or `/speckit.multi-repo.domain guided <member>`
+> to walk the flow from one piece while you add the business context.
 
 ## 3. Specify, plan, and generate tasks (central)
 

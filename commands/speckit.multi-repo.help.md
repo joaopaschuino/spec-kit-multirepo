@@ -82,6 +82,7 @@ exist.
 | Central, agent chat | `specify` cycle (`speckit.specify`, `speckit.plan`, `speckit.tasks`) | produces the feature's spec, plan, tasks |
 | Central, agent chat | `speckit.multi-repo.tasks` | splits `tasks.md` into `tasks/<member>.md` slices, root becomes an orchestration page |
 | Central, agent chat | `speckit.multi-repo.workspace` | scaffolds or audits `.specify/workspace.yml` |
+| Central, agent chat | `speckit.multi-repo.domain [auto\|guided <member>]` | maps the domain topology (`domain`, `communicates_with`) from evidence in member repos, writes `.specify/memory/domain.md` |
 | Central, terminal | `specify workflow run multi-repo -i feature=<dir>` | dispatches implementation to members in waves, interactive gates |
 | Central, terminal | `specify workflow run multi-repo-check [--json]` | read-only doctor: member readiness + waves, dispatches nothing |
 | Central, terminal | `specify workflow resume <run-id>` | re-runs a failed run; completed members are skipped |
@@ -96,7 +97,10 @@ form present in this repository's agent command directory.
 bundles, workflow runs); members produce only implementation code, so a
 member's PR is a pure implementation diff. Dispatch order is topological
 over `depends_on` (human knowledge — never invented), computed per feature
-over participating members only. Governance is three constitution layers —
+over participating members only. The manifest's `domain` and
+`communicates_with` fields describe the runtime communication topology
+(cycles allowed) and never affect dispatch; `speckit.multi-repo.domain`
+fills them from code evidence plus the team's context. Governance is three constitution layers —
 workspace (`central/.specify/memory/constitution.md`), per-member-type file
 declared in the manifest, member-local — assembled at dispatch into
 `<feature>/governance/<member>.md` and handed to the member's agent;
@@ -115,6 +119,9 @@ conflicts resolve to the most restrictive rule.
   `after_tasks` hook offers it automatically after `speckit.tasks`).
 - Wrong dispatch order → fix `depends_on` in `.specify/workspace.yml`; the
   graph is never inferred.
+- Nobody knows which repos talk to which → `speckit.multi-repo.domain`
+  (`auto` for a full sweep, `guided <member>` to walk the flow from one
+  piece); the result is visible in `multi-repo-check`'s `topology` output.
 
 ## Step 4 — Answer shape
 
