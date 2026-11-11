@@ -323,7 +323,7 @@ class MultiRepoImplementStep(StepBase):
         verify_only = {
             member_id
             for member_id, text in task_texts.items()
-            if parse_verification(text) and not has_task_checkboxes(text)
+            if parse_verification(text) is not None and not has_task_checkboxes(text)
         }
         held = self._held_members(workspace, participants, task_texts)
 
