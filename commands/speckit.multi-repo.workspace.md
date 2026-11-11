@@ -45,7 +45,7 @@ This repository is the **central specs repository** of a multi-repo workspace. T
 
 5. **Write** `.specify/workspace.yml` with the confirmed members and dependencies. If running **headless** (no user to answer): write the manifest with empty `depends_on` for every member and print a prominent warning that the dependency graph is empty (all members would dispatch in wave 0) and must be filled before the first dispatch is trusted.
 
-6. **Report next steps**: run `/speckit.multi-repo.tasks` after a feature's tasks exist, and `specify workflow run multi-repo-check` to verify member readiness at any time.
+6. **Report next steps**: run `/speckit.multi-repo.domain` to map the domain topology (`domain`, `communicates_with`) from the members' code, `/speckit.multi-repo.tasks` after a feature's tasks exist, and `specify workflow run multi-repo-check` to verify member readiness at any time.
 
 ## Mode 2 — Audit (manifest exists)
 

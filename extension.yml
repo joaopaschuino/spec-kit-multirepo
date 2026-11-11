@@ -24,6 +24,9 @@ provides:
     - name: speckit.multi-repo.workspace
       file: commands/speckit.multi-repo.workspace.md
       description: "Scaffold or audit the workspace manifest against the local filesystem (run in the central specs repository)"
+    - name: speckit.multi-repo.domain
+      file: commands/speckit.multi-repo.domain.md
+      description: "Map the workspace's domain topology (member domain and communicates_with) by scanning member repositories — automatic or guided — and record it in the manifest (run in the central specs repository)"
     - name: speckit.multi-repo.help
       file: commands/speckit.multi-repo.help.md
       description: "Explain the Spec Kit and multi-repo flows and recommend the next command for this repository's role and feature state (run in any workspace repository)"

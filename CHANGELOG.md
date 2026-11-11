@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dry runs (`multi-repo-check`) report each member's `domain` and
   `communicates_with`, and a `topology` output: a Mermaid flowchart with one
   subgraph per domain, dependency edges, and communication edges
+- `/speckit.multi-repo.domain` agent command (central repo): maps the domain
+  topology from evidence in member repositories — IaC, interface specs,
+  config, HTTP/messaging/storage clients, feature `contracts/` — as edges
+  with channel, direction, confidence, and `file:line`. `auto` sweeps every
+  member and proposes the whole map; `guided [<member>]` walks the flow
+  outward from one piece in a conversation where the user adds the domain
+  context. Writes `domain`/`communicates_with` after confirmation (never
+  `depends_on`) and `.specify/memory/domain.md` (diagram, communication
+  table, external systems, domain notes). `/speckit.multi-repo.tasks` and
+  `/speckit.multi-repo.workspace` point to it
 
 ## [0.6.0] - 2026-11-10
 

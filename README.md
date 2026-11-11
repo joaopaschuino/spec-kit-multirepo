@@ -493,6 +493,31 @@ with two modes:
   (undeclared sibling projects), and confirmed additions only — existing
   entries and their dependencies are never modified
 
+**`/speckit.multi-repo.domain`** — agent command for the central repo that
+fills the manifest's domain view (`domain`, `communicates_with`) from
+evidence instead of memory. It scans member repositories for the signals of
+communication — IaC and deployment descriptors, OpenAPI/AsyncAPI/proto
+specs, `.env` and config, HTTP clients, queue/topic/bucket/state-machine
+names, the feature `contracts/` — and turns matching resource names into
+edges with a channel, a direction, a confidence level, and `file:line`
+evidence. Two modes:
+
+- `auto` — sweep every cloned member, present the whole proposal (tables
+  plus the Mermaid topology), confirm, write
+- `guided [<member>]` — start from the piece you know best and walk the
+  flow outward: the agent scans one member, shows what it talks to, you
+  correct it and add the business context the code cannot show (what the
+  edge carries, who owns it), and the confirmed neighbours become the next
+  stops. Stop whenever you want; the rest stays *not mapped*
+
+In both modes the manifest changes only after confirmation (headless runs
+write the proposal and touch nothing), only `domain` and
+`communicates_with` are written — never `depends_on` — and the result
+lands in `.specify/memory/domain.md`: the topology diagram, a
+communication table (from, to, channel, direction, confidence, evidence),
+external systems, and the team's notes per domain. `/speckit.multi-repo.tasks`
+reads that map when assigning integration tasks to members.
+
 ## What lands in each repository
 
 The design principle: **all feature state lives in the central repository;
