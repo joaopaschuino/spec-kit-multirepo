@@ -1218,3 +1218,37 @@ def test_validate_rejects_bad_verify_retries(step_module):
     for good in (0, 3, "{{ inputs.verify_retries }}"):
         errors = step.validate({"id": "implement", "type": "multi-repo-implement", "verify_retries": good})
         assert not any("verify_retries" in e for e in errors), good
+
+
+def test_empty_verification_only_member_is_skipped_not_verified(
+    tmp_path, step_module, monkeypatch, dispatch_calls
+):
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "api", "path": "repo-api"},
+            {
+                "id": "contract-check",
+                "path": "repo-api",
+                "tasks_file": "tasks/contract-check.md",
+                "depends_on": ["api"],
+            },
+        ],
+    )
+    make_member(tmp_path, "api")
+    feature = make_feature(central, task_files={"api": "- [ ] T001 api\n"})
+    (feature / "tasks" / "contract-check.md").write_text(
+        "## Verification\n\n<!-- no automated checks: contract not finalized -->\n",
+        encoding="utf-8",
+    )
+    patch_integration(monkeypatch, dispatch_calls)
+
+    result = run_step(step_module, central, feature)
+
+    assert result.status == step_module.StepStatus.COMPLETED, result.error
+    assert [c["member"] for c in dispatch_calls] == ["repo-api"]  # no agent for the check
+    check = {r["repo"]: r for r in result.output["results"]}["contract-check"]
+    assert check["mode"] == "verify-only"
+    assert check["status"] == "skipped"
+    assert check["verification"]["status"] == "skipped"
+    assert result.output["verification"]["contract-check"] == "skipped"

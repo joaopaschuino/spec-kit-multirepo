@@ -853,6 +853,13 @@ class MultiRepoImplementStep(StepBase):
         # the objective checks.
         if member.id in verify_only:
             result["mode"] = "verify-only"
+            if not commands:
+                # An empty section proves nothing: never report it verified.
+                result["status"] = "skipped"
+                result["exit_code"] = 0
+                result["verification"] = not_verified("'## Verification' lists no command")
+                set_status("skipped")
+                return result
             outcome = verify("verification-only member")
             result["status"] = "completed" if outcome["status"] == "verified" else "failed"
             set_status(outcome["status"])
