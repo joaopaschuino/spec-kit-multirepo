@@ -210,23 +210,37 @@ def _run_bounded(
         output, _ = proc.communicate(timeout=timeout)
         return proc.returncode, output or "", False
     except subprocess.TimeoutExpired:
-        _kill_tree(proc)
+        kill_process_group(proc)
         output, _ = proc.communicate()
         return proc.returncode, output or "", True
     except BaseException:
-        _kill_tree(proc)
+        kill_process_group(proc)
         proc.wait()
         raise
 
 
-def _kill_tree(proc: subprocess.Popen) -> None:
+def kill_process_group(proc: subprocess.Popen) -> None:
+    """Kill *proc*'s descendants, then *proc* itself.
+
+    *proc* must lead its own process group (``process_group=0`` or
+    ``start_new_session=True``). The leader is frozen first so it cannot
+    spawn more children, every member of its group — the descendants — is
+    killed, and the leader is killed last. Descendants that left the group
+    (``setsid``, daemonizing) are out of reach.
+    """
     if os.name == "posix":
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-            return
+            os.kill(proc.pid, signal.SIGSTOP)
         except (ProcessLookupError, PermissionError):
             pass
-    proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
 
 
 def write_feedback(

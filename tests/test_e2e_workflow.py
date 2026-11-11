@@ -31,7 +31,8 @@ def fake_agent(tmp_path, monkeypatch):
     Appends one record per invocation to $FAKE_AGENT_LOG and exits 1 when a
     ``fail-agent`` sentinel file exists in the working directory. With a
     ``fix-on-feedback`` sentinel, a retry dispatch (verification feedback
-    file among the args) creates ``fixed``; ``hang-agent`` makes it hang.
+    file among the args) creates ``fixed``; ``hang-agent`` makes it start a
+    background child that writes ``late-write`` after 4s, then hang.
     """
     log = tmp_path / "agent-log.jsonl"
     script = tmp_path / "fake-agent.sh"
@@ -49,6 +50,7 @@ def fake_agent(tmp_path, monkeypatch):
         "  if [ -f fix-on-feedback ]; then : > fixed; fi ;;\n"
         "esac\n"
         "if [ -f hang-agent ]; then\n"
+        "  ( sleep 4; : > late-write ) &\n"
         "  sleep 30\n"
         "fi\n"
         "if [ -f fail-agent ]; then\n"
@@ -399,6 +401,9 @@ def test_sequential_dispatch_timeout_kills_hung_agent(central):
     assert s3["status"] == "failed"
     assert s3["timed_out"] is True
     assert "lambda" not in {r["repo"] for r in implement["output"]["results"]}
+    # The agent's descendants were killed with it: no write after the deadline.
+    time.sleep(max(0.0, started + 5 - time.monotonic()))
+    assert not (root / "repo-s3" / "late-write").exists()
 
 
 def test_contract_check_member_runs_after_producer(central):

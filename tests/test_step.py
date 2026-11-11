@@ -1252,3 +1252,46 @@ def test_empty_verification_only_member_is_skipped_not_verified(
     assert check["status"] == "skipped"
     assert check["verification"]["status"] == "skipped"
     assert result.output["verification"]["contract-check"] == "skipped"
+
+
+def test_sequential_timeout_kills_agent_descendants(
+    workspace_setup, step_module, monkeypatch, dispatch_calls
+):
+    import subprocess
+    import time
+
+    central, members, feature = workspace_setup
+    late = members["s3"] / "late-write"
+
+    def agent_with_background_child(root, _args, _kwargs):
+        # The agent spawns a child that writes after the deadline, then hangs.
+        completed = subprocess.run(
+            ["sh", "-c", "(sleep 2; : > late-write) & sleep 30"], cwd=root
+        )
+        return {"exit_code": completed.returncode, "stdout": "", "stderr": ""}
+
+    patch_scripted(monkeypatch, dispatch_calls, {S3: agent_with_background_child})
+
+    result = run_step(step_module, central, feature, dispatch_timeout=1)
+
+    s3 = {r["repo"]: r for r in result.output["results"]}["s3"]
+    assert s3["timed_out"] is True
+    time.sleep(2.5)
+    assert not late.exists()
+
+
+def test_run_in_process_group_matches_subprocess_run(step_module):
+    import subprocess
+
+    completed = step_module.run_in_process_group(
+        ["sh", "-c", "cat; echo err >&2; exit 3"],
+        timeout=10,
+        input="hi",
+        capture_output=True,
+        text=True,
+    )
+    assert (completed.returncode, completed.stdout, completed.stderr) == (3, "hi", "err\n")
+    with pytest.raises(subprocess.CalledProcessError):
+        step_module.run_in_process_group(["sh", "-c", "exit 1"], timeout=10, check=True)
+    with pytest.raises(subprocess.TimeoutExpired):
+        step_module.run_in_process_group(["sh", "-c", "sleep 30"], timeout=0.5)
