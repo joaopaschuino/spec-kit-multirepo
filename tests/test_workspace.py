@@ -268,7 +268,7 @@ def test_topology_mermaid(tmp_path, workspace_module):
             {"id": "orders", "path": "repo-orders", "domain": "checkout",
              "communicates_with": ["payments", "notifications"]},
             {"id": "payments", "path": "repo-payments", "domain": "checkout",
-             "communicates_with": ["orders"]},
+             "depends_on": ["orders"], "communicates_with": ["orders"]},
             {"id": "notifications", "path": "repo-notifications", "domain": "messaging"},
             {"id": "contract-check", "path": "repo-payments", "depends_on": ["orders"]},
         ],
@@ -286,11 +286,31 @@ def test_topology_mermaid(tmp_path, workspace_module):
             '  subgraph d_1["messaging"]',
             '    m_notifications["notifications"]',
             "  end",
+            "  m_orders ==> m_payments",
             "  m_orders ==> m_contract_check",
             "  m_orders <-.-> m_payments",
             "  m_orders -.-> m_notifications",
         ]
     ) + "\n"
+
+
+def test_topology_mermaid_keeps_both_graphs(tmp_path, workspace_module):
+    # sqs produces events lambda consumes AND is an execution dependency:
+    # both edges are drawn — they describe different graphs.
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "sqs", "path": "repo-sqs", "domain": "ingestion", "communicates_with": ["lambda"]},
+            {"id": "lambda", "path": "repo-lambda", "domain": "ingestion",
+             "depends_on": ["sqs"], "communicates_with": ["s3"]},
+            {"id": "s3", "path": "repo-s3", "domain": "platform"},
+        ],
+    )
+    ws = workspace_module.load_workspace(central)
+    diagram = workspace_module.topology_mermaid(ws)
+    assert "m_sqs ==> m_lambda" in diagram
+    assert "m_sqs -.-> m_lambda" in diagram
+    assert "m_lambda -.-> m_s3" in diagram
 
 
 def test_load_workspace_constitution_resolution(tmp_path, workspace_module):

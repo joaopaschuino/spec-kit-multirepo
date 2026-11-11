@@ -470,19 +470,16 @@ def topology_mermaid(workspace: Workspace) -> str:
         for dep in member.depends_on:
             lines.append(f"  {node(dep)} ==> {node(member.id)}")
 
-    # A producer/consumer pair already linked by depends_on is drawn once, as
-    # the execution edge — the dotted communication edge would be a duplicate.
-    execution_links = {
-        frozenset((dep, member.id))
-        for member in workspace.members
-        for dep in member.depends_on
-    }
+    # Communication edges are drawn independently from execution edges: a
+    # pair that both depends_on and communicates keeps the thick edge AND the
+    # dotted one — they describe different graphs. Only the two directions of
+    # a reciprocal communicates_with pair are merged, into one bidirectional
+    # edge.
     talks = {(member.id, peer) for member in workspace.members for peer in member.communicates_with}
     drawn: set[tuple[str, str]] = set()
     for member in workspace.members:
         for peer in member.communicates_with:
-            if (member.id, peer) in drawn or frozenset((member.id, peer)) in execution_links:
-                drawn.add((member.id, peer))
+            if (member.id, peer) in drawn:
                 continue
             if (peer, member.id) in talks:
                 lines.append(f"  {node(member.id)} <-.-> {node(peer)}")

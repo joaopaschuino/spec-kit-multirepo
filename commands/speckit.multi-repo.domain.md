@@ -88,8 +88,8 @@ Keep scans bounded: skip `node_modules/`, `.git/`, `vendor/`, `dist/`, `build/`,
    ```
 
    followed by the Mermaid topology (format in Step 4) and the list of unscanned members.
-3. **Interactive**: ask the user to confirm, correct domain names, accept or reject each open question, and add anything the scan missed (recorded as `evidence: user`). Then go to Step 4.
-   **Headless** (no user to answer): go to Step 4 in *unconfirmed* mode — write the domain map only, print where it is, and print the exact YAML the user would apply to the manifest.
+3. **Interactive**: ask the user to confirm, correct domain names, accept or reject each open question, and add anything the scan missed (recorded as `evidence: user`). Then go to Step 3.
+   **Headless** (no user to answer): go straight to Step 4 in *unconfirmed* mode — write the domain map only, print where it is, and print the exact YAML the user would apply to the manifest.
 
 ## Mode B — `guided`
 
@@ -99,7 +99,7 @@ A conversation that grows the map from one member outward. Use it when the team 
 2. **Scan the current member** (Step 2) and present only *its* findings: outgoing and incoming edges with evidence, open questions, and the proposed `domain` (reconciled with what the user just said).
 3. **Ask, then listen.** For this member only: confirm or correct each edge, answer the open questions, name anything missing (*"Does orders talk to anyone else — a cache, a legacy system, a member not in this workspace?"*), and give the domain context the code cannot show (why the edge exists, which business event it carries, ownership). Record user statements as domain notes; record user-asserted edges with `evidence: user`. Edges to systems that are **not** workspace members are kept in the domain map as *external* (they never enter `communicates_with`).
 4. **Advance the frontier.** Every confirmed neighbour not yet visited joins a queue. Show the queue (*"Next: payments, notifications. Continue with payments, pick another, or stop here?"*). Scanning the next member will often confirm the previous one's edges from the other side — say so when it happens, and surface new open questions as they appear.
-5. **Stop when the user says so or the queue is empty.** Members never reached are listed as *not mapped* (not as isolated — absence of a visit is not evidence of absence of communication). Summarise what was mapped, then go to Step 4.
+5. **Stop when the user says so or the queue is empty.** Members never reached are listed as *not mapped* (not as isolated — absence of a visit is not evidence of absence of communication). Summarise what was mapped, then go to Step 3.
 
 The user can switch to a full sweep at any point (*"scan the rest automatically"*): finish with Mode A over the remaining members, keeping everything already confirmed.
 
