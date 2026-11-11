@@ -157,6 +157,8 @@ flowchart LR
 - reporting — not visited (guided run stopped at payments)
 ````
 
+Members shared by several domains use `domain: platform` (or `shared-*`): one subgraph of their own, consumers as cross-domain edges.
+
 Diagram conventions match the orchestrator's `topology` output (`specify workflow run multi-repo-check --json | jq -r .step_results.check.output.topology`): one `subgraph` per domain; `a ==> b` for `depends_on` (a before b — copied from the manifest, never inferred); `a -.-> b` for communication, `a <-.-> b` when both list each other; external systems as `x_<name>[("…")]` nodes with a labelled dotted edge.
 
 ## Step 5 — Report

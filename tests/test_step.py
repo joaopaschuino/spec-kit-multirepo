@@ -635,8 +635,10 @@ def test_execute_dry_run_reports_without_dispatch(
     assert "communicates_with" not in members["s3"]
     assert members["lambda"]["communicates_with"] == ["s3"]
     assert 'subgraph d_0["ingestion"]' in result.output["topology"]
+    # s3 -> lambda is both a depends_on edge and a communicated pair: drawn once.
     assert "m_s3 ==> m_lambda" in result.output["topology"]
-    assert "m_lambda -.-> m_s3" in result.output["topology"]
+    assert "m_lambda -.-> m_s3" not in result.output["topology"]
+    assert "m_s3 -.-> m_lambda" not in result.output["topology"]
 
 
 def test_execute_dry_run_without_feature_reports_whole_workspace(

@@ -209,6 +209,11 @@ domain, thick arrows for `depends_on` (dependency → dependent, in dispatch
 order), dotted arrows for communication (`<-.->` when both sides list each
 other):
 
+Members used by several domains (a shared bucket, an event bus, a central
+auth service) get `domain: platform` (or `shared-*`): they keep their own
+subgraph, and every consumer shows up as a cross-domain edge — the diagram
+makes inter-domain coupling explicit.
+
 ```mermaid
 flowchart LR
   subgraph d_0["checkout"]
