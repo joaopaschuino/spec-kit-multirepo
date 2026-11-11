@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Domain topology in the workspace manifest**: members accept optional
+  `domain` (business domain) and `communicates_with` (member ids the member
+  talks to at runtime). `communicates_with` must reference known members
+  other than the member itself, but may contain cycles — communication is
+  often bidirectional. `depends_on` remains the only execution graph
+  (acyclic; waves and `ready: false` holds are unchanged)
+- Dry runs (`multi-repo-check`) report each member's `domain` and
+  `communicates_with`, and a `topology` output: a Mermaid flowchart with one
+  subgraph per domain, dependency edges, and communication edges
+
 ## [0.6.0] - 2026-11-10
 
 ### Added

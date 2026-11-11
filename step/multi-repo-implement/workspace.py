@@ -14,6 +14,12 @@ project root::
         integration: claude        # optional; default: member's integration.json
         tasks_file: tasks/lambda.md  # optional; default: tasks/<id>.md
         depends_on: []               # member ids that must complete first
+        domain: billing              # optional; business domain of the member
+        communicates_with: [s3]      # optional; members it talks to at runtime
+
+``depends_on`` is the execution graph (dispatch order, must be acyclic);
+``communicates_with`` is the domain's communication topology (informational,
+may contain cycles) and never affects dispatch.
 
 The manifest is deliberately shaped as a candidate native contract: the
 ``path``/``depends_on``/``tasks_file`` model maps one-to-one onto a future
@@ -40,7 +46,16 @@ WORKSPACE_SCHEMA_VERSION = "1.0"
 _MEMBER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 _ALLOWED_WORKSPACE_KEYS = {"id", "name"}
-_ALLOWED_MEMBER_KEYS = {"id", "path", "integration", "tasks_file", "depends_on", "constitution"}
+_ALLOWED_MEMBER_KEYS = {
+    "id",
+    "path",
+    "integration",
+    "tasks_file",
+    "depends_on",
+    "constitution",
+    "domain",
+    "communicates_with",
+}
 
 
 class WorkspaceError(ValueError):
@@ -66,6 +81,11 @@ class Member:
     constitution: Path | None = None
     #: Member ids whose dispatch must complete before this member's.
     depends_on: tuple[str, ...] = ()
+    #: Optional business domain the member belongs to (e.g. ``billing``).
+    domain: str | None = None
+    #: Member ids this member communicates with at runtime. Describes the
+    #: domain topology only; it may contain cycles and never orders dispatch.
+    communicates_with: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -224,6 +244,32 @@ def load_workspace(project_root: Path) -> Workspace:
                 "'depends_on' must be a list of member ids or omitted."
             )
 
+        domain_node = entry.get("domain")
+        if domain_node is None:
+            domain: str | None = None
+        elif isinstance(domain_node, str) and domain_node.strip():
+            domain = domain_node.strip()
+        else:
+            raise WorkspaceError(
+                f"Workspace manifest {manifest_path}: member {member_id!r} "
+                "'domain' must be a non-empty string or omitted."
+            )
+
+        communicates_node = entry.get("communicates_with")
+        if communicates_node is None:
+            communicates_with: tuple[str, ...] = ()
+        elif isinstance(communicates_node, list) and all(
+            isinstance(peer, str) and peer.strip() for peer in communicates_node
+        ):
+            communicates_with = tuple(
+                dict.fromkeys(peer.strip() for peer in communicates_node)
+            )
+        else:
+            raise WorkspaceError(
+                f"Workspace manifest {manifest_path}: member {member_id!r} "
+                "'communicates_with' must be a list of member ids or omitted."
+            )
+
         constitution_raw = entry.get("constitution")
         if constitution_raw is None:
             constitution: Path | None = None
@@ -247,6 +293,8 @@ def load_workspace(project_root: Path) -> Workspace:
                 tasks_file=tasks_file,
                 constitution=constitution,
                 depends_on=depends_on,
+                domain=domain,
+                communicates_with=communicates_with,
             )
         )
 
@@ -261,9 +309,25 @@ def load_workspace(project_root: Path) -> Workspace:
 
 
 def _validate_graph(manifest_path: Path, members: list[Member]) -> None:
-    """Reject unknown/self dependencies and dependency cycles."""
+    """Reject unknown/self references, and cycles in ``depends_on``.
+
+    ``communicates_with`` is checked for unknown and self references only:
+    communication may be bidirectional, so cycles there are legitimate.
+    """
     known = {member.id for member in members}
     for member in members:
+        for peer in member.communicates_with:
+            if peer == member.id:
+                raise WorkspaceError(
+                    f"Workspace manifest {manifest_path}: member {member.id!r} "
+                    "cannot communicate with itself."
+                )
+            if peer not in known:
+                raise WorkspaceError(
+                    f"Workspace manifest {manifest_path}: member {member.id!r} "
+                    f"communicates with unknown member {peer!r}. Known "
+                    f"members: {sorted(known)}."
+                )
         for dep in member.depends_on:
             if dep == member.id:
                 raise WorkspaceError(
@@ -373,6 +437,53 @@ def workspace_waves(workspace: Workspace, participant_ids: list[str]) -> list[li
     """Convenience wrapper: waves over a workspace's members."""
     graph = {member.id: member.depends_on for member in workspace.members}
     return topological_waves(participant_ids, graph)
+
+
+def topology_mermaid(workspace: Workspace) -> str:
+    """Render the workspace as a Mermaid flowchart.
+
+    Members are grouped into one subgraph per ``domain`` (members without a
+    domain stay at the top level). Execution edges (``depends_on``) are drawn
+    thick from the dependency to its dependent, in dispatch order;
+    communication edges (``communicates_with``) are dotted, and a pair of
+    members listing each other is drawn once as a bidirectional edge.
+    """
+
+    def node(member_id: str) -> str:
+        return "m_" + member_id.replace("-", "_")
+
+    lines = ["flowchart LR"]
+    domains: dict[str, list[Member]] = {}
+    for member in workspace.members:
+        if member.domain is None:
+            lines.append(f'  {node(member.id)}["{member.id}"]')
+        else:
+            domains.setdefault(member.domain, []).append(member)
+    for index, (domain, domain_members) in enumerate(domains.items()):
+        label = domain.replace('"', "'")
+        lines.append(f'  subgraph d_{index}["{label}"]')
+        for member in domain_members:
+            lines.append(f'    {node(member.id)}["{member.id}"]')
+        lines.append("  end")
+
+    for member in workspace.members:
+        for dep in member.depends_on:
+            lines.append(f"  {node(dep)} ==> {node(member.id)}")
+
+    talks = {(member.id, peer) for member in workspace.members for peer in member.communicates_with}
+    drawn: set[tuple[str, str]] = set()
+    for member in workspace.members:
+        for peer in member.communicates_with:
+            if (member.id, peer) in drawn:
+                continue
+            if (peer, member.id) in talks:
+                lines.append(f"  {node(member.id)} <-.-> {node(peer)}")
+                drawn.add((peer, member.id))
+            else:
+                lines.append(f"  {node(member.id)} -.-> {node(peer)}")
+            drawn.add((member.id, peer))
+
+    return "\n".join(lines) + "\n"
 
 
 def read_feature_directory(project_root: Path) -> str:

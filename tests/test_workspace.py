@@ -125,6 +125,49 @@ def test_load_workspace_missing_manifest(tmp_path, workspace_module):
             },
             "unknown keys",
         ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "communicates_with": ["ghost"]}],
+            },
+            "communicates with unknown member 'ghost'",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "communicates_with": ["a"]}],
+            },
+            "cannot communicate with itself",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "communicates_with": "b"}],
+            },
+            "'communicates_with' must be a list of member ids",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "domain": ""}],
+            },
+            "'domain' must be a non-empty string",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [
+                    {"id": "a", "path": "a", "depends_on": ["b"], "communicates_with": ["b"]},
+                    {"id": "b", "path": "b", "depends_on": ["a"]},
+                ],
+            },
+            "dependency cycle detected: a -> b -> a",
+        ),
     ],
 )
 def test_load_workspace_rejects_invalid_manifests(tmp_path, workspace_module, payload, match):
@@ -180,6 +223,75 @@ def test_workspace_waves_end_to_end(tmp_path, workspace_module):
         ["glue", "lambda"],
         ["step-functions"],
     ]
+
+
+def test_load_workspace_parses_domain_and_communication(tmp_path, workspace_module):
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "orders", "path": "repo-orders", "domain": " checkout ",
+             "communicates_with": ["payments", "notifications", "payments"]},
+            {"id": "payments", "path": "repo-payments", "domain": "checkout",
+             "depends_on": ["orders"], "communicates_with": ["orders"]},
+            {"id": "notifications", "path": "repo-notifications"},
+        ],
+    )
+    ws = workspace_module.load_workspace(central)
+
+    orders = ws.member("orders")
+    assert orders.domain == "checkout"
+    assert orders.communicates_with == ("payments", "notifications")  # deduplicated
+    notifications = ws.member("notifications")
+    assert notifications.domain is None
+    assert notifications.communicates_with == ()
+
+
+def test_communication_cycles_allowed_and_ignored_by_waves(tmp_path, workspace_module):
+    # a <-> b <-> c -> a: cycles in communicates_with are legal and never
+    # order dispatch; only depends_on does.
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "a", "path": "repo-a", "communicates_with": ["b", "c"]},
+            {"id": "b", "path": "repo-b", "communicates_with": ["a", "c"]},
+            {"id": "c", "path": "repo-c", "depends_on": ["a"], "communicates_with": ["a"]},
+        ],
+    )
+    ws = workspace_module.load_workspace(central)
+    assert workspace_module.workspace_waves(ws, ["a", "b", "c"]) == [["a", "b"], ["c"]]
+
+
+def test_topology_mermaid(tmp_path, workspace_module):
+    central = write_workspace(
+        tmp_path,
+        members=[
+            {"id": "orders", "path": "repo-orders", "domain": "checkout",
+             "communicates_with": ["payments", "notifications"]},
+            {"id": "payments", "path": "repo-payments", "domain": "checkout",
+             "depends_on": ["orders"], "communicates_with": ["orders"]},
+            {"id": "notifications", "path": "repo-notifications", "domain": "messaging"},
+            {"id": "contract-check", "path": "repo-payments", "depends_on": ["orders"]},
+        ],
+    )
+    ws = workspace_module.load_workspace(central)
+
+    assert workspace_module.topology_mermaid(ws) == "\n".join(
+        [
+            "flowchart LR",
+            '  m_contract_check["contract-check"]',
+            '  subgraph d_0["checkout"]',
+            '    m_orders["orders"]',
+            '    m_payments["payments"]',
+            "  end",
+            '  subgraph d_1["messaging"]',
+            '    m_notifications["notifications"]',
+            "  end",
+            "  m_orders ==> m_payments",
+            "  m_orders ==> m_contract_check",
+            "  m_orders <-.-> m_payments",
+            "  m_orders -.-> m_notifications",
+        ]
+    ) + "\n"
 
 
 def test_load_workspace_constitution_resolution(tmp_path, workspace_module):

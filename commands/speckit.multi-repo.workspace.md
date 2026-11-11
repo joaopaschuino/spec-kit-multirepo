@@ -34,12 +34,14 @@ This repository is the **central specs repository** of a multi-repo workspace. T
      - id: <directory-name>            # member id; the task file defaults to tasks/<id>.md
        path: <relative-path>
        # constitution: constitutions/<type>.md   # optional shared governance file
+       # domain: <business-domain>                # optional; groups members by domain
+       # communicates_with: []                    # optional; members it talks to at runtime (may be bidirectional)
        depends_on: []                  # TODO: fill in — who must complete before this member?
    ```
 
-   Every member starts with `depends_on: []`.
+   Every member starts with `depends_on: []`. `depends_on` is the **execution order** (acyclic); `domain` and `communicates_with` describe the **domain topology** (communication may be bidirectional, so cycles are allowed there) and never affect dispatch.
 
-4. **Confirm with the user** (interactive): show the proposal, ask which candidates to include, and ask — per member — which other members it depends on (the graph only the team knows). Record their answers.
+4. **Confirm with the user** (interactive): show the proposal, ask which candidates to include, and ask — per member — which other members it depends on (the graph only the team knows) and, optionally, its domain and which members it communicates with at runtime. Record their answers; never invent any of them.
 
 5. **Write** `.specify/workspace.yml` with the confirmed members and dependencies. If running **headless** (no user to answer): write the manifest with empty `depends_on` for every member and print a prominent warning that the dependency graph is empty (all members would dispatch in wave 0) and must be filled before the first dispatch is trusted.
 
@@ -47,7 +49,7 @@ This repository is the **central specs repository** of a multi-repo workspace. T
 
 ## Mode 2 — Audit (manifest exists)
 
-1. Read `.specify/workspace.yml` (same checks as the orchestrator: schema, ids, known dependencies, acyclic graph). If it is invalid, report the parser error and stop.
+1. Read `.specify/workspace.yml` (same checks as the orchestrator: schema, ids, known dependencies, acyclic `depends_on` graph, `communicates_with` referencing known members other than itself — cycles there are allowed). If it is invalid, report the parser error and stop.
 
 2. **Check each declared member** and build a status table:
 
@@ -64,6 +66,6 @@ This repository is the **central specs repository** of a multi-repo workspace. T
 
 3. **Detect drift**: repeat the Mode 1 discovery scan; list sibling Spec Kit projects **not** declared in the manifest as "undeclared candidates".
 
-4. **Report**: the table above, undeclared candidates, and a note that `specify workflow run multi-repo-check` gives the same readiness report (plus dispatch waves) in machine-readable form via `--json`.
+4. **Report**: the table above, undeclared candidates, a **topology** section when any member declares `domain` or `communicates_with` — a Mermaid `flowchart LR` with one `subgraph` per domain, `dep ==> member` for each `depends_on` edge (execution order), `a -.-> b` for each `communicates_with` edge (`a <-.-> b` when both list each other) — and a note that `specify workflow run multi-repo-check` gives the same readiness report (plus dispatch waves) in machine-readable form via `--json`.
 
 5. **Additions need confirmation**: if the user asked to add a member (or approves an undeclared candidate), append the entry with `depends_on: []` and flag that the dependency must be set by hand. **Never** modify or remove existing members or their `depends_on` in this mode.

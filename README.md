@@ -158,16 +158,70 @@ members:
     integration: claude        # optional; default: member's integration.json
     tasks_file: tasks/lambda.md  # optional; default: tasks/<id>.md
     depends_on: []               # members that must complete first
+    domain: ingestion            # optional; business domain of the member
+    communicates_with: [s3]      # optional; members it talks to at runtime
   - id: s3
     path: ../repo-s3
+    domain: ingestion
+    communicates_with: [lambda]  # bidirectional: lambda <-> s3 is allowed
 ```
 
 Validation: unique slug ids, `path` must be a Spec Kit project at dispatch
 time, `depends_on` must reference known members, the graph must be acyclic,
-and a member's `constitution` file must exist in the central repository
+`communicates_with` must reference known members other than the member
+itself, and a member's `constitution` file must exist in the central repository
 (fail-fast before any dispatch). Waves are computed per feature over the
 participating subset only — a member not in the feature never blocks its
 dependents.
+
+**Execution order vs. domain topology.** The manifest carries two graphs
+with different meanings:
+
+| Field | Meaning | Cycles | Affects dispatch |
+|-------|---------|--------|------------------|
+| `depends_on` | **Execution order** — who must finish before this member is dispatched | rejected | yes — the only input to waves and `ready: false` holds |
+| `communicates_with` | **Communication topology** of the domain — which members talk to each other at runtime (API calls, events, queues) | allowed (communication is often bidirectional) | no — documentation for humans and agents |
+
+`domain` (optional, free-form string) groups members by business domain.
+For example, an order service and a payment service that call each other
+are a communication cycle, while only the producer of the shared contract
+has to be implemented first:
+
+```yaml
+members:
+  - id: orders
+    path: ../repo-orders
+    domain: checkout
+    communicates_with: [payments, notifications]
+  - id: payments
+    path: ../repo-payments
+    domain: checkout
+    depends_on: [orders]               # orders publishes the contract first
+    communicates_with: [orders]        # payments calls back into orders
+  - id: notifications
+    path: ../repo-notifications
+    domain: messaging                  # consumes events; never calls back
+```
+
+`specify workflow run multi-repo-check` reports each member's `domain` and
+`communicates_with`, plus a `topology` Mermaid diagram — one subgraph per
+domain, thick arrows for `depends_on` (dependency → dependent, in dispatch
+order), dotted arrows for communication (`<-.->` when both sides list each
+other):
+
+```mermaid
+flowchart LR
+  subgraph d_0["checkout"]
+    m_orders["orders"]
+    m_payments["payments"]
+  end
+  subgraph d_1["messaging"]
+    m_notifications["notifications"]
+  end
+  m_orders ==> m_payments
+  m_orders <-.-> m_payments
+  m_orders -.-> m_notifications
+```
 
 > **Naming tip**: member ids may be full repository names (e.g.
 > `itau-nm8-lambda-integracao`) — the task file then defaults to
@@ -203,7 +257,9 @@ Output (usable in later steps / gates via `{{ steps.implement.output.* }}`):
 `verification_summary` (one line), `verification_report` (path of the
 Markdown report the review gate shows), and `members` (the readiness
 report; every declared member on dry runs, with `status`, `reason`,
-`integration`, `constitution`, `participant`, and `verify_only`).
+`integration`, `constitution`, `domain`, `communicates_with`, `participant`,
+and `verify_only`). Dry runs also return `topology`, a Mermaid flowchart of
+the workspace's domains, dependency edges, and communication edges.
 
 Dispatch details: each member's agent CLI runs headless (`claude -p …`,
 `copilot -p … --yolo`, …) with `cwd` = the member repo. Environment for every
@@ -407,6 +463,8 @@ machine-readable report:
 ```sh
 specify workflow run multi-repo-check --json \
   | jq '.step_results.check.output.members'
+specify workflow run multi-repo-check --json \
+  | jq -r '.step_results.check.output.topology'   # Mermaid diagram
 ```
 
 **`missing: skip`** — for teams where each person has cloned only part of
