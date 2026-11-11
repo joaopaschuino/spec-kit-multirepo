@@ -439,3 +439,50 @@ def test_contract_check_member_runs_after_producer(central):
     assert check["verification"]["status"] == "verified"
     # Only the two implementation members dispatched an agent.
     assert len(read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))) == 2
+
+
+def test_monorepo_members_are_subdirectories(tmp_path, fake_agent, monkeypatch):
+    """Mono-repo: the root is central, members are subdirectories of it."""
+    from conftest import make_feature
+
+    root = tmp_path / "mono"
+    members = {"api": "services/api", "worker": "services/worker", "web": "apps/web"}
+    write_workspace(
+        root,
+        members=[
+            {"id": "api", "path": members["api"]},
+            {"id": "worker", "path": members["worker"], "depends_on": ["api"]},
+            {"id": "web", "path": members["web"], "depends_on": ["api"]},
+        ],
+    )
+    for rel in members.values():
+        specify = root / rel / ".specify"
+        specify.mkdir(parents=True)
+        (specify / "integration.json").write_text(
+            json.dumps({"integration": "claude"}), encoding="utf-8"
+        )
+    feature = make_feature(
+        root,
+        task_files={
+            member_id: f"- [ ] {member_id} task\n\n## Verification\n\n"
+            f'- cwd: `test "$PWD" = "{root / rel}"` → exit 0\n'
+            for member_id, rel in members.items()
+        },
+    )
+    monkeypatch.setenv("SPECKIT_WORKFLOW_RUN_ID", RUN_ID)
+    monkeypatch.chdir(root)
+    install_components()
+
+    result = run_multi_repo(root, feature)
+    assert result.exit_code == 0, result.output
+
+    output = read_run_state(root)["step_results"]["implement"]["output"]
+    assert output["waves"] == [["api"], ["web", "worker"]]
+    per_repo = {r["repo"]: r for r in output["results"]}
+    assert {r["status"] for r in per_repo.values()} == {"completed"}
+    assert {r["verification"]["status"] for r in per_repo.values()} == {"verified"}
+    log = read_agent_log(Path(os.environ["FAKE_AGENT_LOG"]))
+    cwds = [r["cwd"] for r in log]
+    assert cwds[0] == str(root / members["api"])
+    assert sorted(cwds[1:]) == sorted(str(root / members[m]) for m in ("web", "worker"))
+    assert all(r["feature"] == str(feature) for r in log)

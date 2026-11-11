@@ -75,7 +75,9 @@ members:
 ```
 
 `path` is relative to the central root — sibling checkouts in this tutorial.
-A git-submodule layout works too (point `path` at the member checkout).
+A git-submodule layout works too (point `path` at the member checkout), and
+so does a mono-repo (members as subdirectories: `path: apps/web`; see
+README, *Mono-repo*).
 
 Then create the shared constitution for the lambda type in the central repo
 (keep the workspace-level one at `central/.specify/memory/constitution.md`,
@@ -99,7 +101,7 @@ unreadable) constitution file fails the run before any dispatch.
 
 > **Tip**: instead of writing the manifest by hand, run
 > `/speckit.multi-repo.workspace` in the central repo — it scans sibling
-> directories for Spec Kit projects and proposes the manifest (you fill in
+> directories (and subdirectories, for mono-repos) for Spec Kit projects and proposes the manifest (you fill in
 > the `depends_on` graph), and audits an existing one afterwards. Verify
 > readiness at any time with `specify workflow run multi-repo-check` — a
 > read-only report of which members are ready, missing, or misconfigured.

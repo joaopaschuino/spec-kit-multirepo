@@ -21,7 +21,7 @@ This repository is the **central specs repository** of a multi-repo workspace. T
 
 1. Verify `.specify/workspace.yml` does not exist. If it exists, go to Mode 2.
 
-2. **Discover candidate members**: list the entries of the parent directory of the repo root (`ls ..`), and for each directory other than this repository, test whether `<name>/.specify` exists (e.g. `test -d "../<name>/.specify"`). Also check subdirectories of the repo root the same way (submodule layouts). Each hit is a Spec Kit project — a candidate member. If none are found, report that no sibling Spec Kit projects were found, show a minimal manifest template, and stop.
+2. **Discover candidate members**: list the entries of the parent directory of the repo root (`ls ..`), and for each directory other than this repository, test whether `<name>/.specify` exists (e.g. `test -d "../<name>/.specify"`). Also check subdirectories of the repo root up to two levels deep (`<dir>/.specify` and `<dir>/<subdir>/.specify`, e.g. `apps/web` in a mono-repo, or submodule layouts), skipping `.git`, `.specify`, `specs`, and dependency/build directories such as `node_modules`, `vendor`, `.venv`. Each hit is a Spec Kit project — a candidate member. If none are found, report that no sibling Spec Kit projects were found, show a minimal manifest template, and stop.
 
 3. **Propose the manifest**: build a table of candidates — directory name, relative path from the repo root, and whether it looks like a code repo (has `.git`, source files) or a specs repo. Propose this YAML:
 
@@ -62,7 +62,7 @@ This repository is the **central specs repository** of a multi-repo workspace. T
    - *Constitution*: the manifest's `constitution` file exists in this repository
    - Map failures to statuses: not cloned / not initialized / no integration / constitution missing
 
-3. **Detect drift**: repeat the Mode 1 discovery scan; list sibling Spec Kit projects **not** declared in the manifest as "undeclared candidates".
+3. **Detect drift**: repeat the Mode 1 discovery scan; list Spec Kit projects found by that scan that are **not** declared in the manifest as "undeclared candidates".
 
 4. **Report**: the table above, undeclared candidates, and a note that `specify workflow run multi-repo-check` gives the same readiness report (plus dispatch waves) in machine-readable form via `--json`.
 

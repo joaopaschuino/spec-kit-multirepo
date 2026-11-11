@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Mono-repo layout** documented (README *Repository topologies* →
+  *Mono-repo*): the repository root is the central project and each stack
+  is a member subdirectory (`path: apps/web`). No orchestrator change — a
+  new end-to-end test covers it
+- `/speckit.multi-repo.workspace` discovers members up to two levels deep
+  inside the repo root (`apps/web`, `services/api`)
+
 ## [0.6.0] - 2026-11-10
 
 ### Added

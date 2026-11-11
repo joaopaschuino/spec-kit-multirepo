@@ -137,12 +137,49 @@ specify extension add multi-repo --from <ext-zip-url> --force
 
 ### Repository topologies
 
-`workspace.yml` member `path`s are relative to the central root, so both
+`workspace.yml` member `path`s are relative to the central root, so these
 layouts work:
 
 - **Sibling checkouts**: `path: ../repo-lambda` (simplest; what the tests use)
 - **Git submodule of the specs repo inside each member**: point the member
   entry at the member checkout location relative to the central repo
+- **Mono-repo**: the repository root is the central project and each stack
+  is a member subdirectory (`path: apps/web`, `path: services/api`)
+
+#### Mono-repo
+
+Run `specify init` at the repository root (central: `specs/`,
+`.specify/workspace.yml`) and again inside each member subdirectory
+(`specify init --here --integration <agent>` in `apps/web`, …). Spec Kit
+resolves the nearest `.specify/` upwards, so each member's agent runs as its
+own project, with its subdirectory as the working directory:
+
+```yaml
+members:
+  - id: api
+    path: services/api      # Go
+  - id: worker
+    path: services/worker   # Python
+    depends_on: [api]
+  - id: web
+    path: apps/web          # Next.js
+    depends_on: [api]
+```
+
+What differs from separate repositories:
+
+- **One working tree**: the feature branch created at the root covers every
+  member, so the feature lands as one PR. Keep `max_concurrency: 1` —
+  parallel agents share the same `.git` and would race on commits.
+- **No repository boundary**: a member's agent can edit other members'
+  directories. Its task slice and governance bundle scope it; a
+  `## Verification` command can enforce it — uncommitted changes outside
+  the member's directory and the central `specs/`:
+  ``- scope: `test -z "$(git status --porcelain -- ':/' ':!.' ':!/specs')"` → exit 0``
+- **Root context files are inherited**: agents read `CLAUDE.md` /
+  `AGENTS.md` from parent directories, so the root one reaches every
+  member. Keep it stack-neutral; put stack rules in each member's
+  `.specify/memory/constitution.md` or a type `constitution`.
 
 ## Workspace manifest — `.specify/workspace.yml`
 
@@ -426,13 +463,14 @@ not manifest errors.
 **`/speckit.multi-repo.workspace`** — agent command for the central repo,
 with two modes:
 
-- *Scaffold* (no manifest yet): scans sibling directories for Spec Kit
-  projects and proposes a `.specify/workspace.yml` (ids from directory
+- *Scaffold* (no manifest yet): scans sibling directories and
+  subdirectories of the repo root (two levels deep, for mono-repos) for Spec
+  Kit projects and proposes a `.specify/workspace.yml` (ids from directory
   names, relative paths). It never invents `depends_on` — the dependency
   graph is human knowledge; interactively it asks, headlessly it writes the
   graph empty with a warning
 - *Audit* (manifest exists): per-member readiness table, drift detection
-  (undeclared sibling projects), and confirmed additions only — existing
+  (undeclared Spec Kit projects), and confirmed additions only — existing
   entries and their dependencies are never modified
 
 ## What lands in each repository
