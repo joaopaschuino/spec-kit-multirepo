@@ -1280,10 +1280,10 @@ def test_sequential_timeout_kills_agent_descendants(
     assert not late.exists()
 
 
-def test_run_in_process_group_matches_subprocess_run(step_module):
+def test_run_with_watchdog_matches_subprocess_run(step_module):
     import subprocess
 
-    completed = step_module.run_in_process_group(
+    completed = step_module.run_with_watchdog(
         ["sh", "-c", "cat; echo err >&2; exit 3"],
         timeout=10,
         input="hi",
@@ -1292,6 +1292,38 @@ def test_run_in_process_group_matches_subprocess_run(step_module):
     )
     assert (completed.returncode, completed.stdout, completed.stderr) == (3, "hi", "err\n")
     with pytest.raises(subprocess.CalledProcessError):
-        step_module.run_in_process_group(["sh", "-c", "exit 1"], timeout=10, check=True)
+        step_module.run_with_watchdog(["sh", "-c", "exit 1"], timeout=10, check=True)
     with pytest.raises(subprocess.TimeoutExpired):
-        step_module.run_in_process_group(["sh", "-c", "sleep 30"], timeout=0.5)
+        step_module.run_with_watchdog(["sh", "-c", "sleep 30"], timeout=0.5)
+
+
+def test_watchdog_keeps_agent_in_orchestrator_process_group(step_module, tmp_path):
+    import os
+
+    with step_module.streaming_watchdog(10):
+        step_module.subprocess.run(
+            ["sh", "-c", "ps -o pgid= -p $$ > pgid"], cwd=tmp_path
+        )
+    assert int((tmp_path / "pgid").read_text()) == os.getpgrp()
+
+
+def test_watchdog_kills_descendants_in_another_session(step_module, tmp_path):
+    import subprocess
+    import sys
+    import time
+
+    # The agent's child moves to its own session (out of the agent's process
+    # group) and writes after the deadline; the tree walk still reaches it.
+    spawn_detached = (
+        "import subprocess; subprocess.Popen("
+        "['sh', '-c', 'sleep 2; : > late-write'], start_new_session=True)"
+        ".wait()"
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        with step_module.streaming_watchdog(1):
+            step_module.subprocess.run(
+                ["sh", "-c", f'"{sys.executable}" -c "{spawn_detached}"; sleep 30'],
+                cwd=tmp_path,
+            )
+    time.sleep(2.5)
+    assert not (tmp_path / "late-write").exists()

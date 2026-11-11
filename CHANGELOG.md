@@ -43,10 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `dispatch_timeout` now bounds sequential (streamed) dispatches too, via a
   watchdog — previously only parallel waves were time-bounded. A timed-out
-  member is `failed` with `timed_out: true`. Under the watchdog the agent
-  runs in its own process group, and on timeout its descendants are killed
-  before the agent, so no build/test process it spawned keeps writing to the
-  member repository. Verification commands share the same bound
+  member is `failed` with `timed_out: true`. The agent stays in the
+  orchestrator's process group (terminal behavior unchanged); on timeout its
+  process tree is killed, descendants before the agent, so no build/test
+  process it spawned keeps writing to the member repository. Verification
+  commands share the same bound and tree kill
 - With `skip_completed`, a checked-off member that has Verification commands
   is skipped only when its checks pass; otherwise it is re-dispatched with
   feedback

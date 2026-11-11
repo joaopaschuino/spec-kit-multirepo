@@ -515,15 +515,15 @@ an upstream RFC.
 - The sequential-mode watchdog relies on the integration launching its agent
   through `subprocess.run` (true for the Spec Kit base integration); a
   custom integration that spawns processes differently is bounded only in
-  parallel mode. Under the watchdog the agent runs in its own process group
-  (same session, so output still streams live); on timeout its descendants
-  are killed first, then the agent. Descendants that leave that group
-  (`setsid`, daemonized or `nohup`-detached background services) are out of
-  reach and can survive the timeout. Because the agent is not in the
-  terminal's foreground group, Ctrl+C reaches the orchestrator, which then
-  kills the agent's group; an agent that reads from the terminal would be
-  stopped by the shell (headless dispatches do not). Parallel (captured)
-  dispatches are bounded by the core, which kills only the agent process
+  parallel mode. The agent stays in the orchestrator's process group, so
+  the terminal, Ctrl+C, Ctrl+Z and hang-ups behave as without the watchdog.
+  On timeout the agent is frozen and its process tree is killed —
+  descendants first (found through parent/child links, so also those that
+  moved to another process group or session), then the agent. Descendants
+  already re-parented to init (double-forked daemons, background services
+  detached with `&` from a shell that has since exited) are out of reach
+  and can survive the timeout. Parallel (captured) dispatches are bounded by
+  the core, which kills only the agent process
 - No automatic cross-repo contract synchronization (contract-check members
   verify, they do not sync): follow the
   [contract-driven development guide](https://github.com/github/spec-kit/blob/main/docs/guides/contract-driven-development.md)

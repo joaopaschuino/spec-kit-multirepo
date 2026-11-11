@@ -101,7 +101,7 @@ from .verification import (
     VERIFICATION_DIR,
     has_task_checkboxes,
     is_marked_ready,
-    kill_process_group,
+    kill_process_tree,
     parse_verification,
     run_verification,
     update_orchestration_status,
@@ -1031,12 +1031,12 @@ def streaming_watchdog(timeout: float | None) -> Iterator[None]:
     The core runs streamed dispatches with ``subprocess.run(...)`` and no
     timeout (the user can Ctrl+C), which leaves an unattended sequential
     run unbounded. While active, the timeout-less ``subprocess.run`` calls
-    made **by the current thread** are replaced by :func:`run_in_process_group`:
-    the agent runs in its own process group (same session, so it keeps
-    streaming to the terminal), and when *timeout* elapses its descendants
-    and then the agent are killed and ``subprocess.TimeoutExpired`` is
-    raised to the step. Calls from other threads, and calls that already
-    carry a timeout, are left untouched.
+    made **by the current thread** are replaced by :func:`run_with_watchdog`:
+    the agent stays in the orchestrator's process group (terminal, Ctrl+C,
+    Ctrl+Z and hang-up behave as without the watchdog), and when *timeout*
+    elapses its process tree — descendants first, then the agent — is killed
+    and ``subprocess.TimeoutExpired`` is raised to the step. Calls from other
+    threads, and calls that already carry a timeout, are left untouched.
     """
     if timeout is None:
         yield
@@ -1046,7 +1046,7 @@ def streaming_watchdog(timeout: float | None) -> Iterator[None]:
 
     def guarded_run(*popenargs: Any, **kwargs: Any) -> Any:
         if threading.get_ident() == owner and kwargs.get("timeout") is None:
-            return run_in_process_group(*popenargs, timeout=timeout, **kwargs)
+            return run_with_watchdog(*popenargs, timeout=timeout, **kwargs)
         return original(*popenargs, **kwargs)
 
     subprocess.run = guarded_run  # type: ignore[assignment]
@@ -1056,16 +1056,16 @@ def streaming_watchdog(timeout: float | None) -> Iterator[None]:
         subprocess.run = original  # type: ignore[assignment]
 
 
-def run_in_process_group(
+def run_with_watchdog(
     *popenargs: Any, timeout: float, **kwargs: Any
 ) -> subprocess.CompletedProcess:
     """``subprocess.run`` equivalent that kills the whole process tree.
 
     ``subprocess.run`` kills only its direct child on timeout, so a build or
     test process the agent spawned would keep writing to the member
-    repository after the member is marked failed. Here the child leads its
-    own process group; on timeout (or an interrupt such as Ctrl+C) the
-    group is killed — descendants first, then the child.
+    repository after the member is marked failed. Here, on timeout (or an
+    interrupt such as Ctrl+C), the child's descendants are killed first,
+    then the child (see :func:`kill_process_tree`).
     """
     kwargs.pop("timeout", None)
     stdin_data = kwargs.pop("input", None)
@@ -1075,17 +1075,15 @@ def run_in_process_group(
         kwargs["stderr"] = subprocess.PIPE
     if stdin_data is not None:
         kwargs["stdin"] = subprocess.PIPE
-    if os.name == "posix":
-        kwargs.setdefault("process_group", 0)
     with subprocess.Popen(*popenargs, **kwargs) as proc:
         try:
             stdout, stderr = proc.communicate(stdin_data, timeout=timeout)
         except subprocess.TimeoutExpired:
-            kill_process_group(proc)
+            kill_process_tree(proc)
             proc.wait()
             raise subprocess.TimeoutExpired(proc.args, timeout) from None
         except BaseException:
-            kill_process_group(proc)
+            kill_process_tree(proc)
             proc.wait()
             raise
     if check and proc.returncode:

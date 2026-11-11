@@ -186,7 +186,7 @@ def run_verification(
 def _run_bounded(
     argv: list[str], *, cwd: Path, timeout: float | None
 ) -> tuple[int | None, str, bool]:
-    """Run *argv*, merging stdout/stderr; kill its process group on timeout."""
+    """Run *argv*, merging stdout/stderr; kill its process tree on timeout."""
     popen_kwargs: dict[str, Any] = {}
     if os.name == "posix":
         popen_kwargs["start_new_session"] = True
@@ -210,37 +210,104 @@ def _run_bounded(
         output, _ = proc.communicate(timeout=timeout)
         return proc.returncode, output or "", False
     except subprocess.TimeoutExpired:
-        kill_process_group(proc)
+        kill_process_tree(proc)
         output, _ = proc.communicate()
         return proc.returncode, output or "", True
     except BaseException:
-        kill_process_group(proc)
+        kill_process_tree(proc)
         proc.wait()
         raise
 
 
-def kill_process_group(proc: subprocess.Popen) -> None:
-    """Kill *proc*'s descendants, then *proc* itself.
+def kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill every descendant of *proc*, then *proc* itself.
 
-    *proc* must lead its own process group (``process_group=0`` or
-    ``start_new_session=True``). The leader is frozen first so it cannot
-    spawn more children, every member of its group — the descendants — is
-    killed, and the leader is killed last. Descendants that left the group
-    (``setsid``, daemonizing) are out of reach.
+    *proc* is frozen first so it cannot spawn more children; descendants are
+    then found by walking the parent/child links (so they are reached even
+    when they moved to another process group or session), frozen as they are
+    found, and killed once the tree is stable. If *proc* leads its own
+    process group, the rest of that group is killed too. Descendants already
+    re-parented to init (double-forked daemons) are out of reach.
     """
     if os.name == "posix":
+        frozen: list[int] = []
+        _signal(proc.pid, signal.SIGSTOP)
+        for _ in range(10):
+            new = [pid for pid in _descendants(proc.pid) if pid not in frozen]
+            if not new:
+                break
+            for pid in new:
+                _signal(pid, signal.SIGSTOP)
+            frozen.extend(new)
+        for pid in reversed(frozen):
+            _signal(pid, signal.SIGKILL)
         try:
-            os.kill(proc.pid, signal.SIGSTOP)
+            leads_group = os.getpgid(proc.pid) == proc.pid
         except (ProcessLookupError, PermissionError):
-            pass
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+            leads_group = False
+        if leads_group:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
     try:
         proc.kill()
     except ProcessLookupError:
         pass
+
+
+def _signal(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _descendants(root: int) -> list[int]:
+    """PIDs below *root* in the process tree, parents before children."""
+    children: dict[int, list[int]] = {}
+    for pid, ppid in _process_table():
+        children.setdefault(ppid, []).append(pid)
+    found: list[int] = []
+    queue = [root]
+    while queue:
+        for child in children.get(queue.pop(0), []):
+            if child not in found and child != root:
+                found.append(child)
+                queue.append(child)
+    return found
+
+
+def _process_table() -> list[tuple[int, int]]:
+    """``(pid, ppid)`` of every process: ``/proc`` on Linux, else ``ps``."""
+    table: list[tuple[int, int]] = []
+    proc_dir = Path("/proc")
+    if (proc_dir / "self" / "stat").exists():
+        for entry in proc_dir.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            fields = stat.rsplit(")", 1)[-1].split()
+            if len(fields) >= 2 and fields[1].isdigit():
+                table.append((int(entry.name), int(fields[1])))
+        return table
+    try:
+        listing = subprocess.run(
+            ["ps", "-A", "-o", "pid=", "-o", "ppid="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return table
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            table.append((int(parts[0]), int(parts[1])))
+    return table
 
 
 def write_feedback(
