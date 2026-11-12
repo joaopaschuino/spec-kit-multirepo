@@ -43,8 +43,8 @@ From a release (see the [README](../README.md#install) for URLs), or from a
 clone of this repository:
 
 ```sh
-git clone https://github.com/joaopaschuino/spec-kit-multirepo
-cd spec-kit-multirepo
+git clone https://github.com/joaopaschuino/speckit-multirepo
+cd speckit-multirepo
 
 # central: agent commands + custom step + workflow
 ./install.sh central ../central
