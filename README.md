@@ -66,18 +66,18 @@ In each **member repository**:
 
 ```sh
 specify extension add multi-repo --from \
-  https://github.com/joaopaschuino/speckit-multirepo/archive/refs/tags/v0.7.0.zip
+  https://github.com/joaopaschuino/speckit-multirepo/archive/refs/tags/v0.7.1.zip
 ```
 
 In the **central specs repository**, the two commands above plus:
 
 ```sh
 specify workflow step add multi-repo-implement --from \
-  https://github.com/joaopaschuino/speckit-multirepo/releases/download/v0.7.0/step-multi-repo-implement-v0.7.0.zip
+  https://github.com/joaopaschuino/speckit-multirepo/releases/download/v0.7.1/step-multi-repo-implement-v0.7.1.zip
 specify workflow add multi-repo --from \
-  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.0/workflow/multi-repo/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.1/workflow/multi-repo/workflow.yml
 specify workflow add multi-repo-check --from \
-  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.0/workflow/multi-repo-check/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.1/workflow/multi-repo-check/workflow.yml
 ```
 
 (The step install asks an interactive trust confirmation before downloading —
@@ -87,7 +87,7 @@ default-deny; answer `yes`.)
 
 ```sh
 ./install.sh central /path/to/central-repo                # local (--dev) mode
-./install.sh member  /path/to/member-repo --release v0.7.0 # release mode
+./install.sh member  /path/to/member-repo --release v0.7.1 # release mode
 ```
 
 `install.sh` runs, respectively:
@@ -108,9 +108,9 @@ idempotently. Nothing else in your repositories is touched; governance
 bundles are regenerated per dispatch, so there is nothing to migrate.
 
 ```sh
-./install.sh central /path/to/central-repo --release v0.7.0   # or --dev <clone-dir>
-./install.sh member  /path/to/member-a --release v0.7.0
-./install.sh member  /path/to/member-b --release v0.7.0
+./install.sh central /path/to/central-repo --release v0.7.1   # or --dev <clone-dir>
+./install.sh member  /path/to/member-a --release v0.7.1
+./install.sh member  /path/to/member-b --release v0.7.1
 
 specify workflow run multi-repo-check   # verify: every member should report ready
 ```
