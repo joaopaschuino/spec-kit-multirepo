@@ -21,7 +21,7 @@ This repository is the **central specs repository** of a multi-repo workspace. T
 
 1. Verify `.specify/workspace.yml` does not exist. If it exists, go to Mode 2.
 
-2. **Discover candidate members**: list the entries of the parent directory of the repo root (`ls ..`), and for each directory other than this repository, test whether `<name>/.specify` exists (e.g. `test -d "../<name>/.specify"`). Also check subdirectories of the repo root the same way (submodule layouts). Each hit is a Spec Kit project — a candidate member. If none are found, report that no sibling Spec Kit projects were found, show a minimal manifest template, and stop.
+2. **Discover candidate members**: list the entries of the parent directory of the repo root (`ls ..`), and for each directory other than this repository, test whether `<name>/.specify` exists (e.g. `test -d "../<name>/.specify"`). Also check subdirectories of the repo root up to two levels deep (`<dir>/.specify` and `<dir>/<subdir>/.specify`, e.g. `apps/web` in a mono-repo, or submodule layouts), skipping `.git`, `.specify`, `specs`, and dependency/build directories such as `node_modules`, `vendor`, `.venv`. Each hit is a Spec Kit project — a candidate member. If none are found, report that no sibling Spec Kit projects were found, show a minimal manifest template, and stop.
 
 3. **Propose the manifest**: build a table of candidates — directory name, relative path from the repo root, and whether it looks like a code repo (has `.git`, source files) or a specs repo. Propose this YAML:
 
@@ -31,13 +31,15 @@ This repository is the **central specs repository** of a multi-repo workspace. T
      id: <slug-of-the-platform>        # ask the user, or derive from the central repo's directory name
      name: "<Human name>"
    members:
-     - id: <directory-name>            # member id; the task file defaults to tasks/<id>.md
+     - id: <member-id>                 # unique; the task file defaults to tasks/<id>.md
        path: <relative-path>
        # constitution: constitutions/<type>.md   # optional shared governance file
        # domain: <business-domain>                # optional; groups members by domain
        # communicates_with: []                    # optional; members it talks to at runtime (may be bidirectional)
        depends_on: []                  # TODO: fill in — who must complete before this member?
    ```
+
+   **Member ids** must be unique and match `^[a-z0-9][a-z0-9-]*$`: use the directory name, lowercased, with any other character replaced by `-`. When two or more candidates would get the same id (e.g. `apps/web` and `services/web`), give each of them an id derived from its relative path instead (`apps-web`, `services-web`); use these ids consistently in `depends_on` and `communicates_with`.
 
    Every member starts with `depends_on: []`. `depends_on` is the **execution order** (acyclic); `domain` and `communicates_with` describe the **domain topology** (communication may be bidirectional, so cycles are allowed there) and never affect dispatch.
 
@@ -64,8 +66,8 @@ This repository is the **central specs repository** of a multi-repo workspace. T
    - *Constitution*: the manifest's `constitution` file exists in this repository
    - Map failures to statuses: not cloned / not initialized / no integration / constitution missing
 
-3. **Detect drift**: repeat the Mode 1 discovery scan; list sibling Spec Kit projects **not** declared in the manifest as "undeclared candidates".
+3. **Detect drift**: repeat the Mode 1 discovery scan; list Spec Kit projects found by that scan that are **not** declared in the manifest as "undeclared candidates".
 
 4. **Report**: the table above, undeclared candidates, a **topology** section when any member declares `domain` or `communicates_with` — a Mermaid `flowchart LR` with one `subgraph` per domain, `dep ==> member` for each `depends_on` edge (execution order), `a -.-> b` for each `communicates_with` edge (`a <-.-> b` when both list each other) — and a note that `specify workflow run multi-repo-check` gives the same readiness report (plus dispatch waves) in machine-readable form via `--json`.
 
-5. **Additions need confirmation**: if the user asked to add a member (or approves an undeclared candidate), append the entry with `depends_on: []` and flag that the dependency must be set by hand. **Never** modify or remove existing members or their `depends_on` in this mode.
+5. **Additions need confirmation**: if the user asked to add a member (or approves an undeclared candidate), append the entry with `depends_on: []` (its id follows the Mode 1 rules and must not collide with an existing id — derive it from the relative path if it would) and flag that the dependency must be set by hand. **Never** modify or remove existing members or their `depends_on` in this mode.

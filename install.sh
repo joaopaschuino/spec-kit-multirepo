@@ -28,7 +28,7 @@
 # confirmation (default-deny) before downloading; answer "yes" when prompted.
 set -euo pipefail
 
-REPO="joaopaschuino/spec-kit-multirepo"
+REPO="joaopaschuino/speckit-multirepo"
 
 role="${1:?usage: install.sh central|member <project-dir> [--release vX.Y.Z | --dev <package-dir>]}"
 project="${2:?usage: install.sh central|member <project-dir> [--release vX.Y.Z | --dev <package-dir>]}"
