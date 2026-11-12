@@ -172,10 +172,8 @@ What differs from separate repositories:
   member, so the feature lands as one PR. Keep `max_concurrency: 1` —
   parallel agents share the same `.git` and would race on commits.
 - **No repository boundary**: a member's agent can edit other members'
-  directories. Its task slice and governance bundle scope it; a
-  `## Verification` command can enforce it — uncommitted changes outside
-  the member's directory and the central `specs/`:
-  ``- scope: `test -z "$(git status --porcelain -- ':/' ':!.' ':!/specs')"` → exit 0``
+  directories. Its task slice and governance bundle scope it; review the
+  feature PR per directory.
 - **Root context files are inherited**: agents read `CLAUDE.md` /
   `AGENTS.md` from parent directories, so the root one reaches every
   member. Keep it stack-neutral; put stack rules in each member's
@@ -529,7 +527,8 @@ with two modes:
 - *Scaffold* (no manifest yet): scans sibling directories and
   subdirectories of the repo root (two levels deep, for mono-repos) for Spec
   Kit projects and proposes a `.specify/workspace.yml` (ids from directory
-  names, relative paths). It never invents `depends_on` — the dependency
+  names — derived from the relative path when names collide, e.g.
+  `apps-web` / `services-web` — and relative paths). It never invents `depends_on` — the dependency
   graph is human knowledge; interactively it asks, headlessly it writes the
   graph empty with a warning
 - *Audit* (manifest exists): per-member readiness table, drift detection

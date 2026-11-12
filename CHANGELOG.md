@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a member subdirectory (`path: apps/web`). No orchestrator change — a
   new end-to-end test covers it
 - `/speckit.multi-repo.workspace` discovers members up to two levels deep
-  inside the repo root (`apps/web`, `services/api`)
+  inside the repo root (`apps/web`, `services/api`); member ids that would
+  collide are derived from the relative path (`apps-web`, `services-web`)
 
 ### Changed
 

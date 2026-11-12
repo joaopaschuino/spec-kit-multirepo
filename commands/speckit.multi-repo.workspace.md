@@ -31,13 +31,15 @@ This repository is the **central specs repository** of a multi-repo workspace. T
      id: <slug-of-the-platform>        # ask the user, or derive from the central repo's directory name
      name: "<Human name>"
    members:
-     - id: <directory-name>            # member id; the task file defaults to tasks/<id>.md
+     - id: <member-id>                 # unique; the task file defaults to tasks/<id>.md
        path: <relative-path>
        # constitution: constitutions/<type>.md   # optional shared governance file
        # domain: <business-domain>                # optional; groups members by domain
        # communicates_with: []                    # optional; members it talks to at runtime (may be bidirectional)
        depends_on: []                  # TODO: fill in — who must complete before this member?
    ```
+
+   **Member ids** must be unique and match `^[a-z0-9][a-z0-9-]*$`: use the directory name, lowercased, with any other character replaced by `-`. When two or more candidates would get the same id (e.g. `apps/web` and `services/web`), give each of them an id derived from its relative path instead (`apps-web`, `services-web`); use these ids consistently in `depends_on` and `communicates_with`.
 
    Every member starts with `depends_on: []`. `depends_on` is the **execution order** (acyclic); `domain` and `communicates_with` describe the **domain topology** (communication may be bidirectional, so cycles are allowed there) and never affect dispatch.
 
@@ -68,4 +70,4 @@ This repository is the **central specs repository** of a multi-repo workspace. T
 
 4. **Report**: the table above, undeclared candidates, a **topology** section when any member declares `domain` or `communicates_with` — a Mermaid `flowchart LR` with one `subgraph` per domain, `dep ==> member` for each `depends_on` edge (execution order), `a -.-> b` for each `communicates_with` edge (`a <-.-> b` when both list each other) — and a note that `specify workflow run multi-repo-check` gives the same readiness report (plus dispatch waves) in machine-readable form via `--json`.
 
-5. **Additions need confirmation**: if the user asked to add a member (or approves an undeclared candidate), append the entry with `depends_on: []` and flag that the dependency must be set by hand. **Never** modify or remove existing members or their `depends_on` in this mode.
+5. **Additions need confirmation**: if the user asked to add a member (or approves an undeclared candidate), append the entry with `depends_on: []` (its id follows the Mode 1 rules and must not collide with an existing id — derive it from the relative path if it would) and flag that the dependency must be set by hand. **Never** modify or remove existing members or their `depends_on` in this mode.
