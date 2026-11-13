@@ -11,6 +11,7 @@ project root::
     members:
       - id: lambda
         path: ../repo-lambda
+        url: git@github.com:acme/repo-lambda.git  # optional; clone source
         integration: claude        # optional; default: member's integration.json
         tasks_file: tasks/lambda.md  # optional; default: tasks/<id>.md
         depends_on: []               # member ids that must complete first
@@ -19,7 +20,9 @@ project root::
 
 ``depends_on`` is the execution graph (dispatch order, must be acyclic);
 ``communicates_with`` is the domain's communication topology (informational,
-may contain cycles) and never affects dispatch.
+may contain cycles) and never affects dispatch. ``url`` is the git remote the
+bootstrap (``multi-repo-bootstrap`` workflow) clones a member from when its
+``path`` does not exist yet.
 
 The manifest is deliberately shaped as a candidate native contract: the
 ``path``/``depends_on``/``tasks_file`` model maps one-to-one onto a future
@@ -49,6 +52,7 @@ _ALLOWED_WORKSPACE_KEYS = {"id", "name"}
 _ALLOWED_MEMBER_KEYS = {
     "id",
     "path",
+    "url",
     "integration",
     "tasks_file",
     "depends_on",
@@ -69,6 +73,8 @@ class Member:
     id: str
     #: Absolute, resolved member project root.
     path: Path
+    #: Git remote used to clone the member when ``path`` does not exist.
+    url: str | None = None
     #: Integration key override; ``None`` means "read the member's own
     #: ``.specify/integration.json``".
     integration: str | None = None
@@ -213,6 +219,13 @@ def load_workspace(project_root: Path) -> Workspace:
         # time (filesystem validation happens separately in the step).
         path = path.resolve()
 
+        url = entry.get("url")
+        if url is not None and (not isinstance(url, str) or not url.strip()):
+            raise WorkspaceError(
+                f"Workspace manifest {manifest_path}: member {member_id!r} "
+                "'url' must be a non-empty string or omitted."
+            )
+
         integration = entry.get("integration")
         if integration is not None and (
             not isinstance(integration, str) or not integration.strip()
@@ -289,6 +302,7 @@ def load_workspace(project_root: Path) -> Workspace:
             Member(
                 id=member_id,
                 path=path,
+                url=url.strip() if url else None,
                 integration=integration.strip() if integration else None,
                 tasks_file=tasks_file,
                 constitution=constitution,

@@ -40,6 +40,21 @@ def test_load_workspace_parses_defaults(tmp_path, workspace_module):
     assert s3.tasks_file == "tasks/s3.md"
 
 
+def test_load_workspace_parses_url(tmp_path, workspace_module):
+    central = write_workspace(
+        tmp_path / "central",
+        members=[
+            {"id": "lambda", "path": "../repo-lambda", "url": "  git@github.com:acme/repo-lambda.git  "},
+            {"id": "s3", "path": "repo-s3"},
+        ],
+    )
+
+    ws = workspace_module.load_workspace(central)
+
+    assert ws.member("lambda").url == "git@github.com:acme/repo-lambda.git"
+    assert ws.member("s3").url is None  # optional
+
+
 def test_load_workspace_missing_manifest(tmp_path, workspace_module):
     with pytest.raises(workspace_module.WorkspaceError, match="workspace manifest"):
         workspace_module.load_workspace(tmp_path)
@@ -156,6 +171,38 @@ def test_load_workspace_missing_manifest(tmp_path, workspace_module):
                 "members": [{"id": "a", "path": "a", "domain": ""}],
             },
             "'domain' must be a non-empty string",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "url": ""}],
+            },
+            "'url' must be a non-empty string or omitted",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "url": "   "}],
+            },
+            "'url' must be a non-empty string or omitted",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "url": 42}],
+            },
+            "'url' must be a non-empty string or omitted",
+        ),
+        (
+            {
+                "schema_version": "1.0",
+                "workspace": {"id": "x"},
+                "members": [{"id": "a", "path": "a", "url": "git@x:a.git", "remote": "git@x:a.git"}],
+            },
+            "unknown keys: \\['remote'\\]",
         ),
         (
             {

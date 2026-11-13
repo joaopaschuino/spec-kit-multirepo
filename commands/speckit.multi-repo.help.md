@@ -81,10 +81,11 @@ exist.
 |---|---|---|
 | Central, agent chat | `specify` cycle (`speckit.specify`, `speckit.plan`, `speckit.tasks`) | produces the feature's spec, plan, tasks |
 | Central, agent chat | `speckit.multi-repo.tasks` | splits `tasks.md` into `tasks/<member>.md` slices, root becomes an orchestration page |
-| Central, agent chat | `speckit.multi-repo.workspace` | scaffolds or audits `.specify/workspace.yml` |
+| Central, agent chat | `speckit.multi-repo.workspace [audit\|bootstrap]` | scaffolds or audits `.specify/workspace.yml`; `bootstrap` clones the missing members from their `url` |
 | Central, agent chat | `speckit.multi-repo.domain [auto\|guided <member>]` | maps the domain topology (`domain`, `communicates_with`) from evidence in member repos, writes `.specify/memory/domain.md` |
 | Central, terminal | `specify workflow run multi-repo -i feature=<dir>` | dispatches implementation to members in waves, interactive gates |
 | Central, terminal | `specify workflow run multi-repo-check [--json]` | read-only doctor: member readiness + waves, dispatches nothing |
+| Central, terminal | `specify workflow run multi-repo-bootstrap [-i dry_run=true]` | clones members missing locally from their manifest `url`, git-ignores clones inside the central repo |
 | Central, terminal | `specify workflow resume <run-id>` | re-runs a failed run; completed members are skipped |
 | Member, agent chat | `speckit.multi-repo.implement` | implements this member's task slice (usually dispatched headlessly by the orchestrator, not typed) |
 
@@ -111,8 +112,10 @@ conflicts resolve to the most restrictive rule.
 - A member failed → fix the code in that member repository, then
   `specify workflow resume <run-id>` in the central; members whose task
   files are fully checked off are not dispatched again.
-- A member is not cloned locally → re-run with `-i missing=skip`
-  (configuration mistakes still abort; `skip` covers local absence only).
+- A member is not cloned locally → clone it with `specify workflow run
+  multi-repo-bootstrap` (needs the member's `url` in the manifest), or
+  re-run with `-i missing=skip` (configuration mistakes still abort; `skip`
+  covers local absence only).
 - Unclear whether the workspace is healthy → `specify workflow run
   multi-repo-check --json` and inspect the `members` report.
 - Tasks were not split → run `speckit.multi-repo.tasks` in the central (the

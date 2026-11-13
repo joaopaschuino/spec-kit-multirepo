@@ -23,7 +23,7 @@ provides:
       description: "Implement this repository's slice of a centrally-specified feature (run in a member repository)"
     - name: speckit.multi-repo.workspace
       file: commands/speckit.multi-repo.workspace.md
-      description: "Scaffold or audit the workspace manifest against the local filesystem (run in the central specs repository)"
+      description: "Scaffold or audit the workspace manifest against the local filesystem, or bootstrap it — clone the missing members from their manifest url (run in the central specs repository)"
     - name: speckit.multi-repo.domain
       file: commands/speckit.multi-repo.domain.md
       description: "Map the workspace's domain topology (member domain and communicates_with) by scanning member repositories — automatic or guided — and record it in the manifest (run in the central specs repository)"

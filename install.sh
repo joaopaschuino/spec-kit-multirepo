@@ -60,17 +60,20 @@ if [ "$mode" = "dev" ]; then
     "$SPECIFY_BIN" workflow step add multi-repo-implement --dev "$src/step/multi-repo-implement" --force
     "$SPECIFY_BIN" workflow add "$src/workflow/multi-repo" --dev
     "$SPECIFY_BIN" workflow add "$src/workflow/multi-repo-check" --dev
+    "$SPECIFY_BIN" workflow add "$src/workflow/multi-repo-bootstrap" --dev
   fi
 else
   ext_zip="https://github.com/$REPO/archive/refs/tags/$release.zip"
   wf_url="https://raw.githubusercontent.com/$REPO/$release/workflow/multi-repo/workflow.yml"
   wf_check_url="https://raw.githubusercontent.com/$REPO/$release/workflow/multi-repo-check/workflow.yml"
+  wf_bootstrap_url="https://raw.githubusercontent.com/$REPO/$release/workflow/multi-repo-bootstrap/workflow.yml"
   step_zip="https://github.com/$REPO/releases/download/$release/step-multi-repo-implement-$release.zip"
   "$SPECIFY_BIN" extension add multi-repo --from "$ext_zip" --force
   if [ "$role" = "central" ]; then
     "$SPECIFY_BIN" workflow step add multi-repo-implement --from "$step_zip" --force
     "$SPECIFY_BIN" workflow add multi-repo --from "$wf_url"
     "$SPECIFY_BIN" workflow add multi-repo-check --from "$wf_check_url"
+    "$SPECIFY_BIN" workflow add multi-repo-bootstrap --from "$wf_bootstrap_url"
   fi
 fi
 

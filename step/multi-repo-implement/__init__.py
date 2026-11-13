@@ -20,6 +20,7 @@ Configuration (all fields optional)::
       persist_feature: false            # write feature.json in members
       stop_on_failure: true             # halt before the next wave on failure
       dry_run: false                    # report member readiness, dispatch nothing
+      bootstrap: false                  # clone absent members from their url instead
       missing: error                    # error | skip for locally-absent members
       verify_retries: 0                 # re-dispatches after a failed verification
 
@@ -54,6 +55,15 @@ entry also carries its ``domain`` and ``communicates_with`` when declared, and
 ``topology`` holds a Mermaid flowchart of the whole workspace (domains,
 dependency and communication edges). The ``multi-repo-check`` workflow wraps
 this mode as a workspace doctor.
+
+``bootstrap: true`` turns the step into the workspace bootstrap: every
+declared member whose ``path`` does not exist and that has a ``url`` is
+cloned (``git clone <url> <path>``), members already present are skipped,
+absent members without a ``url`` are reported, and paths of cloned members
+inside the central repository are added to its ``.gitignore``. Combined with
+``dry_run: true`` it only reports what it would clone. No feature directory
+is needed and nothing is dispatched. The ``multi-repo-bootstrap`` workflow
+wraps this mode.
 
 ``missing: skip`` supports teams where each member of the team has cloned
 only part of the workspace: participants that are not cloned locally (or not
@@ -101,6 +111,7 @@ from .workspace import (
     topology_mermaid,
     workspace_waves,
 )
+from .bootstrap import BootstrapError, bootstrap_workspace, origin_url
 from .verification import (
     VERIFICATION_DIR,
     has_task_checkboxes,
@@ -153,6 +164,7 @@ _KNOWN_CONFIG_KEYS = {
     "persist_feature",
     "stop_on_failure",
     "dry_run",
+    "bootstrap",
     "missing",
     "model",
     "verify_retries",
@@ -244,12 +256,13 @@ class MultiRepoImplementStep(StepBase):
                 f"'error' or 'skip', got {missing_value!r}."
             )
 
-        dry_run_value = config.get("dry_run")
-        if dry_run_value is not None and not isinstance(dry_run_value, (bool, str)):
-            errors.append(
-                f"Multi-repo-implement step {step_id}: 'dry_run' must be "
-                f"true or false, got {dry_run_value!r}."
-            )
+        for field in ("dry_run", "bootstrap"):
+            value = config.get(field)
+            if value is not None and not isinstance(value, (bool, str)):
+                errors.append(
+                    f"Multi-repo-implement step {step_id}: '{field}' must be "
+                    f"true or false, got {value!r}."
+                )
 
         return errors
 
@@ -276,6 +289,9 @@ class MultiRepoImplementStep(StepBase):
         except WorkspaceError as exc:
             return StepResult(status=StepStatus.FAILED, output=output, error=str(exc))
         output["workspace"] = workspace.id
+
+        if settings["bootstrap"]:
+            return self._bootstrap(workspace, settings["dry_run"], output)
 
         # 2. Central feature directory. Optional for dry runs: a workspace
         # check without an active feature reports the whole workspace.
@@ -352,6 +368,12 @@ class MultiRepoImplementStep(StepBase):
                 entry["reason"] = classified["reason"]
             if classified["integration"]:
                 entry["integration"] = classified["integration"]
+            if member.url:
+                entry["url"] = member.url
+            elif settings["dry_run"]:
+                suggested = origin_url(member.path)
+                if suggested:
+                    entry["suggested_url"] = suggested
             if member.constitution:
                 entry["constitution"] = str(member.constitution)
             if member.domain:
@@ -520,6 +542,17 @@ class MultiRepoImplementStep(StepBase):
     # -- helpers ------------------------------------------------------------
 
     @staticmethod
+    def _bootstrap(workspace: Workspace, dry_run: bool, output: dict[str, Any]) -> StepResult:
+        output["bootstrap"] = True
+        output["dry_run"] = dry_run
+        try:
+            output.update(bootstrap_workspace(workspace, dry_run=dry_run))
+        except BootstrapError as exc:
+            output.update(exc.result)
+            return StepResult(status=StepStatus.FAILED, output=output, error=str(exc))
+        return StepResult(status=StepStatus.COMPLETED, output=output)
+
+    @staticmethod
     def _resolve_settings(config: dict[str, Any], context: StepContext) -> dict[str, Any]:
         def resolve(value: Any) -> Any:
             if isinstance(value, str) and "{{" in value:
@@ -574,6 +607,7 @@ class MultiRepoImplementStep(StepBase):
             "persist_feature": resolve_bool(config.get("persist_feature"), False),
             "stop_on_failure": resolve_bool(config.get("stop_on_failure"), True),
             "dry_run": resolve_bool(config.get("dry_run"), False),
+            "bootstrap": resolve_bool(config.get("bootstrap"), False),
             "missing": missing,
         }
 
@@ -686,6 +720,11 @@ class MultiRepoImplementStep(StepBase):
             if not member.path.is_dir():
                 entry["status"] = "not-cloned"
                 entry["reason"] = f"member path not found: {member.path}"
+                if member.url:
+                    entry["reason"] += (
+                        f"; clone it from {member.url} with 'specify workflow "
+                        "run multi-repo-bootstrap'"
+                    )
                 report[member.id] = entry
                 continue
             if member.id in verify_only:
