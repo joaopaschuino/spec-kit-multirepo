@@ -18,6 +18,7 @@ Pure module (no ``specify_cli`` imports) so it can be unit-tested directly.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -114,15 +115,19 @@ def _clone(member: Member, root: Path) -> str | None:
     except OSError as exc:
         return f"cannot create {member.path.parent}: {exc}"
     # Captured output means a credential prompt would be invisible: fail fast
-    # instead (credential helpers and SSH agents still work).
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    # instead (credential helpers and SSH agents still work). SSH ignores
+    # GIT_TERMINAL_PROMPT and reads passphrases / host-key confirmations
+    # from the controlling terminal, so the clone runs without one.
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "SSH_ASKPASS_REQUIRE": "never"}
     try:
         completed = subprocess.run(
             ["git", "clone", "--", member.url, str(member.path)],
             cwd=root,
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            start_new_session=True,
         )
     except OSError as exc:
         return f"cannot run git: {exc}"
@@ -157,7 +162,7 @@ def ensure_gitignored(root: Path, members: list[Member], *, write: bool = True) 
         if not relative.parts:
             continue
         rel = relative.as_posix()
-        entry = f"/{rel}/"
+        entry = f"/{_escape_gitignore(rel)}/"
         if entry in added or _is_ignored(root, rel, existing):
             continue
         added.append(entry)
@@ -171,6 +176,11 @@ def ensure_gitignored(root: Path, members: list[Member], *, write: bool = True) 
         lines += "".join(f"{entry}\n" for entry in added)
         gitignore.write_text(lines, encoding="utf-8")
     return added
+
+
+def _escape_gitignore(path: str) -> str:
+    """Escape gitignore glob characters so ``path`` matches literally."""
+    return re.sub(r"([\\*?\[])", r"\\\1", path)
 
 
 def _is_ignored(root: Path, rel: str, gitignore_text: str) -> bool:
@@ -189,9 +199,9 @@ def _is_ignored(root: Path, rel: str, gitignore_text: str) -> bool:
     # Not a git work tree: match plain (glob-free) .gitignore lines.
     for line in gitignore_text.splitlines():
         pattern = line.strip()
-        if not pattern or pattern.startswith(("#", "!")) or any(c in pattern for c in "*?["):
+        if not pattern or pattern.startswith(("#", "!")) or re.search(r"(?<!\\)[*?\[]", pattern):
             continue
-        pattern = pattern.strip("/")
+        pattern = re.sub(r"\\(.)", r"\1", pattern).strip("/")
         if rel == pattern or rel.startswith(pattern + "/"):
             return True
     return False
@@ -217,7 +227,9 @@ def origin_url(path: Path) -> str | None:
         if toplevel.returncode != 0 or Path(toplevel.stdout.strip()).resolve() != path.resolve():
             return None
         remote = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
+            # The configured value, not ``remote get-url``: url.insteadOf
+            # rewrites are local to this machine, not the teammate's.
+            ["git", "config", "--get", "remote.origin.url"],
             cwd=path,
             capture_output=True,
             text=True,
@@ -225,4 +237,15 @@ def origin_url(path: Path) -> str | None:
     except OSError:
         return None
     url = remote.stdout.strip()
-    return url if remote.returncode == 0 and url else None
+    if remote.returncode != 0 or not url:
+        return None
+    # A relative local remote is relative to the member; the bootstrap
+    # resolves urls against the central root, so make it absolute.
+    if not _URL_SCHEME_RE.match(url) and not _SCP_LIKE_RE.match(url) and not Path(url).is_absolute():
+        url = str((path / url).resolve())
+    return url
+
+
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+#: ``[user@]host:path`` — git's scp-like syntax (no slash before the colon).
+_SCP_LIKE_RE = re.compile(r"^[^/]+:")

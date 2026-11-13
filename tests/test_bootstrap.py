@@ -279,3 +279,64 @@ def test_dry_run_reports_url_and_suggests_origin(tmp_path, step_module):
     assert "suggested_url" not in members["lambda"]
     assert members["glue"]["status"] == "not-cloned"
     assert "multi-repo-bootstrap" in members["glue"]["reason"]
+
+
+def test_clone_runs_without_a_terminal(tmp_path, workspace_module, bootstrap_module, monkeypatch):
+    """SSH prompts on the controlling tty regardless of GIT_TERMINAL_PROMPT."""
+    calls = []
+    real_run = subprocess.run
+
+    def recording_run(args, **kwargs):
+        if args[:2] == ["git", "clone"]:
+            calls.append(kwargs)
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(bootstrap_module.subprocess, "run", recording_run)
+    remote = make_remote(tmp_path, "s3")
+    central = write_workspace(
+        tmp_path / "central", members=[{"id": "s3", "path": "../repo-s3", "url": str(remote)}]
+    )
+
+    bootstrap_module.bootstrap_workspace(workspace_module.load_workspace(central))
+
+    (kwargs,) = calls
+    assert kwargs["start_new_session"] is True
+    assert kwargs["stdin"] == subprocess.DEVNULL
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kwargs["env"]["SSH_ASKPASS_REQUIRE"] == "never"
+
+
+def test_origin_url_resolves_relative_local_remote(tmp_path, bootstrap_module):
+    remote = make_remote(tmp_path, "s3")
+    member = make_remote(tmp_path, "member")
+    git(member, "remote", "add", "origin", "../s3")
+    scp = make_remote(tmp_path, "scp")
+    git(scp, "remote", "add", "origin", "git@github.com:acme/scp.git")
+
+    assert bootstrap_module.origin_url(member) == str(remote.resolve())
+    assert bootstrap_module.origin_url(scp) == "git@github.com:acme/scp.git"
+
+
+def test_gitignore_entries_escape_glob_characters(tmp_path, workspace_module, bootstrap_module):
+    remote = make_remote(tmp_path, "web")
+    central = tmp_path / "central"
+    central.mkdir()
+    git(central, "init", "-q", "-b", "main")
+    write_workspace(
+        central, members=[{"id": "web", "path": "apps/web[old]", "url": str(remote)}]
+    )
+
+    result = bootstrap_module.bootstrap_workspace(workspace_module.load_workspace(central))
+
+    assert result["gitignore"] == ["/apps/web\\[old]/"]
+    assert "apps/" not in git(central, "status", "--porcelain", "--untracked-files=all")
+    (central / "apps" / "webo").mkdir()
+    (central / "apps" / "webo" / "f").write_text("x", encoding="utf-8")
+    assert "apps/webo/f" in git(central, "status", "--porcelain", "--untracked-files=all")
+
+    # Outside a git work tree the escaped line is still recognised.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / ".gitignore").write_text("/apps/web\\[old]/\n", encoding="utf-8")
+    member = workspace_module.Member(id="web", path=plain / "apps" / "web[old]", url="x")
+    assert bootstrap_module.ensure_gitignored(plain, [member], write=False) == []
