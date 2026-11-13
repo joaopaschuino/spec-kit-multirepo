@@ -87,6 +87,10 @@ def bootstrap_workspace(workspace: Workspace, *, dry_run: bool = False) -> dict[
     # is cloned after its parent instead of blocking it.
     failure: str | None = None
     for member in sorted(to_clone, key=lambda m: len(m.path.parts)):
+        if member.path.exists():
+            # Cloned earlier in this run by a member sharing the checkout.
+            entries[member.id]["status"] = "present"
+            continue
         error = _clone(member, workspace.root)
         if error:
             entries[member.id]["status"] = "failed"
