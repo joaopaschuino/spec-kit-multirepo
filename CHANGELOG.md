@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.2] - 2026-11-13
 
 ### Added
 
@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remote (scaffold, and audit after confirmation — never for mono-repo
   subdirectories); `multi-repo-check` reports `url` / `suggested_url` per
   member, and a not-cloned member with `url` points to the bootstrap
+
+### Upgrade
+
+- Re-run the same `install.sh` command you used originally on the central
+  repository and on each member; on the central repository it also adds the
+  new `multi-repo-bootstrap` workflow. Existing manifests stay valid (`url`
+  is optional)
 
 ## [0.7.1] - 2026-11-11
 
