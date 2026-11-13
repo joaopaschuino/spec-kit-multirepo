@@ -314,6 +314,8 @@ def test_origin_url_resolves_relative_local_remote(tmp_path, bootstrap_module):
     git(scp, "remote", "add", "origin", "git@github.com:acme/scp.git")
 
     assert bootstrap_module.origin_url(member) == str(remote.resolve())
+    git(member, "config", "--add", "remote.origin.url", "https://example.com/other.git")
+    assert bootstrap_module.origin_url(member) == str(remote.resolve())
     assert bootstrap_module.origin_url(scp) == "git@github.com:acme/scp.git"
 
 

@@ -228,15 +228,17 @@ def origin_url(path: Path) -> str | None:
             return None
         remote = subprocess.run(
             # The configured value, not ``remote get-url``: url.insteadOf
-            # rewrites are local to this machine, not the teammate's.
-            ["git", "config", "--get", "remote.origin.url"],
+            # rewrites are local to this machine, not the teammate's. Git
+            # fetches from the first of several urls; ``--get`` gives the last.
+            ["git", "config", "--get-all", "remote.origin.url"],
             cwd=path,
             capture_output=True,
             text=True,
         )
     except OSError:
         return None
-    url = remote.stdout.strip()
+    urls = remote.stdout.split("\n")
+    url = urls[0].strip()
     if remote.returncode != 0 or not url:
         return None
     # A relative local remote is relative to the member; the bootstrap
