@@ -342,3 +342,20 @@ def test_gitignore_entries_escape_glob_characters(tmp_path, workspace_module, bo
     (plain / ".gitignore").write_text("/apps/web\\[old]/\n", encoding="utf-8")
     member = workspace_module.Member(id="web", path=plain / "apps" / "web[old]", url="x")
     assert bootstrap_module.ensure_gitignored(plain, [member], write=False) == []
+
+
+def test_bootstrap_members_sharing_a_checkout_clone_once(tmp_path, workspace_module, bootstrap_module):
+    remote = make_remote(tmp_path, "api")
+    central = write_workspace(
+        tmp_path / "central",
+        members=[
+            {"id": "api", "path": "../repo-api", "url": str(remote)},
+            {"id": "api-contract", "path": "../repo-api", "url": str(remote)},
+        ],
+    )
+
+    result = bootstrap_module.bootstrap_workspace(workspace_module.load_workspace(central))
+
+    assert result["cloned"] == ["api"]
+    assert result["present"] == ["api-contract"]
+    assert (tmp_path / "repo-api" / "README.md").is_file()
