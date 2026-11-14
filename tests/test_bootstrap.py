@@ -359,3 +359,22 @@ def test_bootstrap_members_sharing_a_checkout_clone_once(tmp_path, workspace_mod
     assert result["cloned"] == ["api"]
     assert result["present"] == ["api-contract"]
     assert (tmp_path / "repo-api" / "README.md").is_file()
+
+
+def test_bootstrap_clones_member_into_empty_submodule_dir(tmp_path, workspace_module, bootstrap_module):
+    child = make_remote(tmp_path, "child")
+    parent = make_remote(tmp_path, "parent")
+    git(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(child), "libs/child")
+    git(parent, "commit", "-q", "-m", "submodule")
+    central = write_workspace(
+        tmp_path / "central",
+        members=[
+            {"id": "parent", "path": "../repo-parent", "url": str(parent)},
+            {"id": "child", "path": "../repo-parent/libs/child", "url": str(child)},
+        ],
+    )
+
+    result = bootstrap_module.bootstrap_workspace(workspace_module.load_workspace(central))
+
+    assert result["cloned"] == ["parent", "child"]
+    assert (tmp_path / "repo-parent" / "libs" / "child" / "README.md").is_file()

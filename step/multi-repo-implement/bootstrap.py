@@ -86,9 +86,12 @@ def bootstrap_workspace(workspace: Workspace, *, dry_run: bool = False) -> dict[
     # Shallow paths first, so a member nested inside another member's path
     # is cloned after its parent instead of blocking it.
     failure: str | None = None
+    cloned_paths: set[Path] = set()
     for member in sorted(to_clone, key=lambda m: len(m.path.parts)):
-        if member.path.exists():
-            # Cloned earlier in this run by a member sharing the checkout.
+        if member.path.resolve() in cloned_paths:
+            # Members sharing a checkout: the first one cloned it. Any other
+            # path that now exists (e.g. an empty submodule directory left by
+            # a parent clone) is still cloned; git refuses a non-empty one.
             entries[member.id]["status"] = "present"
             continue
         error = _clone(member, workspace.root)
@@ -98,6 +101,7 @@ def bootstrap_workspace(workspace: Workspace, *, dry_run: bool = False) -> dict[
             failure = f"Bootstrap of member {member.id!r} failed: {error}"
             break
         entries[member.id]["status"] = "cloned"
+        cloned_paths.add(member.path.resolve())
     for entry in entries.values():
         if entry["status"] == "pending":
             entry["status"] = "not-attempted"
