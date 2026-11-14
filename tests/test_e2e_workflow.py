@@ -120,12 +120,12 @@ def read_run_state(central: Path) -> dict:
 
 
 def install_components():
-    """Install the step and both workflows through the real CLI."""
+    """Install the step and the workflows through the real CLI."""
     result = invoke_specify(
         ["workflow", "step", "add", "multi-repo-implement", "--dev", str(PACKAGE_ROOT / "step" / "multi-repo-implement")]
     )
     assert result.exit_code == 0, result.output
-    for name in ("multi-repo", "multi-repo-check"):
+    for name in ("multi-repo", "multi-repo-check", "multi-repo-bootstrap"):
         result = invoke_specify(
             ["workflow", "add", str(PACKAGE_ROOT / "workflow" / name), "--dev"]
         )
@@ -487,3 +487,38 @@ def test_monorepo_members_are_subdirectories(tmp_path, fake_agent, monkeypatch):
     assert cwds[0] == str(root / members["api"])
     assert sorted(cwds[1:]) == sorted(str(root / members[m]) for m in ("web", "worker"))
     assert all(r["feature"] == str(feature) for r in log)
+
+
+def test_multi_repo_bootstrap_clones_missing_members(central, tmp_path):
+    """The bootstrap workflow clones an absent member from its manifest url."""
+    import subprocess
+
+    root, _feature, _lambda_repo = central
+    remote = tmp_path / "remotes" / "glue"
+    remote.mkdir(parents=True)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q"], cwd=remote, check=True)
+    (remote / "README.md").write_text("# glue\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=remote, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], cwd=remote, check=True)
+    write_workspace(
+        root,
+        members=[
+            {"id": "s3", "path": "repo-s3", "constitution": "constitutions/s3.md"},
+            {"id": "lambda", "path": "repo-lambda", "depends_on": ["s3"]},
+            {"id": "glue", "path": "members/glue", "url": remote.as_uri()},
+        ],
+    )
+    install_components()
+
+    result = invoke_specify(["workflow", "run", "multi-repo-bootstrap"])
+    assert result.exit_code == 0, result.output
+
+    assert (root / "members" / "glue" / "README.md").is_file()
+    state = read_run_state(root)
+    output = state["step_results"]["bootstrap"]["output"]
+    assert output["cloned"] == ["glue"]
+    assert output["present"] == ["s3", "lambda"]
+    assert output["gitignore"] == ["/members/glue/"]
+    assert "/members/glue/" in (root / ".gitignore").read_text(encoding="utf-8")
+    assert not Path(os.environ["FAKE_AGENT_LOG"]).exists()  # nothing dispatched

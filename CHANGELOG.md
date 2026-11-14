@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-11-13
+
+### Added
+
+- **Member `url` in the workspace manifest**: optional git remote a member
+  is cloned from when its `path` does not exist (non-empty string; unknown
+  member keys are still rejected)
+- **Workspace bootstrap** — clone the central repository, then
+  `specify workflow run multi-repo-bootstrap` (or
+  `/speckit.multi-repo.workspace bootstrap`): every absent member with a
+  `url` is cloned (`git clone <url> <path>`, parent directories created),
+  present members are skipped, absent members without `url` are reported, a
+  failed clone aborts with the git error, and clones inside the central
+  repository are added to its `.gitignore`. `-i dry_run=true` previews. The
+  step gains a `bootstrap` mode; `install.sh central` installs the new
+  workflow
+- `/speckit.multi-repo.workspace` fills `url` from each member's `origin`
+  remote (scaffold, and audit after confirmation — never for mono-repo
+  subdirectories); `multi-repo-check` reports `url` / `suggested_url` per
+  member, and a not-cloned member with `url` points to the bootstrap
+
+### Upgrade
+
+- Re-run the same `install.sh` command you used originally on the central
+  repository and on each member; on the central repository it also adds the
+  new `multi-repo-bootstrap` workflow. Existing manifests stay valid (`url`
+  is optional)
+
 ## [0.7.1] - 2026-11-11
 
 ### Added

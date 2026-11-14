@@ -66,18 +66,20 @@ In each **member repository**:
 
 ```sh
 specify extension add multi-repo --from \
-  https://github.com/joaopaschuino/speckit-multirepo/archive/refs/tags/v0.7.1.zip
+  https://github.com/joaopaschuino/speckit-multirepo/archive/refs/tags/v0.7.2.zip
 ```
 
 In the **central specs repository**, the two commands above plus:
 
 ```sh
 specify workflow step add multi-repo-implement --from \
-  https://github.com/joaopaschuino/speckit-multirepo/releases/download/v0.7.1/step-multi-repo-implement-v0.7.1.zip
+  https://github.com/joaopaschuino/speckit-multirepo/releases/download/v0.7.2/step-multi-repo-implement-v0.7.2.zip
 specify workflow add multi-repo --from \
-  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.1/workflow/multi-repo/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.2/workflow/multi-repo/workflow.yml
 specify workflow add multi-repo-check --from \
-  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.1/workflow/multi-repo-check/workflow.yml
+  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.2/workflow/multi-repo-check/workflow.yml
+specify workflow add multi-repo-bootstrap --from \
+  https://raw.githubusercontent.com/joaopaschuino/speckit-multirepo/v0.7.2/workflow/multi-repo-bootstrap/workflow.yml
 ```
 
 (The step install asks an interactive trust confirmation before downloading —
@@ -87,7 +89,7 @@ default-deny; answer `yes`.)
 
 ```sh
 ./install.sh central /path/to/central-repo                # local (--dev) mode
-./install.sh member  /path/to/member-repo --release v0.7.1 # release mode
+./install.sh member  /path/to/member-repo --release v0.7.2 # release mode
 ```
 
 `install.sh` runs, respectively:
@@ -96,6 +98,8 @@ default-deny; answer `yes`.)
 specify extension add <clone-dir> --dev
 specify workflow step add multi-repo-implement --dev <clone-dir>/step/multi-repo-implement
 specify workflow add <clone-dir>/workflow/multi-repo --dev
+specify workflow add <clone-dir>/workflow/multi-repo-check --dev
+specify workflow add <clone-dir>/workflow/multi-repo-bootstrap --dev
 ```
 
 ### Upgrading an existing workspace
@@ -108,9 +112,9 @@ idempotently. Nothing else in your repositories is touched; governance
 bundles are regenerated per dispatch, so there is nothing to migrate.
 
 ```sh
-./install.sh central /path/to/central-repo --release v0.7.1   # or --dev <clone-dir>
-./install.sh member  /path/to/member-a --release v0.7.1
-./install.sh member  /path/to/member-b --release v0.7.1
+./install.sh central /path/to/central-repo --release v0.7.2   # or --dev <clone-dir>
+./install.sh member  /path/to/member-a --release v0.7.2
+./install.sh member  /path/to/member-b --release v0.7.2
 
 specify workflow run multi-repo-check   # verify: every member should report ready
 ```
@@ -131,6 +135,7 @@ specify extension add multi-repo --from <ext-zip-url> --force
 specify workflow step add multi-repo-implement --from <step-zip-url> --force
 specify workflow add multi-repo --from <workflow-url>
 specify workflow add multi-repo-check --from <check-workflow-url>
+specify workflow add multi-repo-bootstrap --from <bootstrap-workflow-url>
 # each member (plus the AGENTS.md governance section, via install.sh member)
 specify extension add multi-repo --from <ext-zip-url> --force
 ```
@@ -189,6 +194,7 @@ workspace:
 members:
   - id: lambda
     path: ../repo-lambda
+    url: git@github.com:acme/repo-lambda.git  # optional; clone source for the bootstrap
     constitution: constitutions/lambda.md  # shared by every lambda member
     integration: claude        # optional; default: member's integration.json
     tasks_file: tasks/lambda.md  # optional; default: tasks/<id>.md
@@ -202,7 +208,7 @@ members:
 ```
 
 Validation: unique slug ids, `path` must be a Spec Kit project at dispatch
-time, `depends_on` must reference known members, the graph must be acyclic,
+time, `url` (optional) must be a non-empty string, `depends_on` must reference known members, the graph must be acyclic,
 `communicates_with` must reference known members other than the member
 itself, and a member's `constitution` file must exist in the central repository
 (fail-fast before any dispatch). Waves are computed per feature over the
@@ -262,6 +268,42 @@ flowchart LR
   m_orders <-.-> m_payments
   m_orders -.-> m_notifications
 ```
+
+### Bootstrapping a fresh checkout — `url`
+
+`url` (optional) is the git remote a member is cloned from when its `path`
+does not exist yet — anything `git clone` accepts (SSH, HTTPS, `file://`,
+or a local path, relative to the central root). With every member's `url`
+declared, a new teammate only clones the central repository:
+
+```sh
+git clone git@github.com:acme/platform-specs.git && cd platform-specs
+specify workflow run multi-repo-bootstrap -i dry_run=true   # preview
+specify workflow run multi-repo-bootstrap                   # clone the members
+specify workflow run multi-repo-check                       # every member ready?
+```
+
+— or just asks the agent to configure the workspace
+(`/speckit.multi-repo.workspace bootstrap`), which previews, confirms, runs
+the bootstrap, and points out what is still missing. The bootstrap:
+
+- runs `git clone <url> <path>` for each member whose `path` is absent and
+  that has a `url`, creating parent directories (`apps/`, `../`);
+- skips members already present (re-running it is safe) and reports absent
+  members without `url` (they are left alone; the run still succeeds);
+- aborts on the first failed clone with the git error (clones completed
+  before it are kept). Credential prompts are disabled: authenticate through
+  an SSH agent or a git credential helper;
+- adds the paths of member clones that land **inside** the central
+  repository (`apps/web` → `/apps/web/`) to its `.gitignore`, unless git
+  already ignores them, so they are never recorded as embedded
+  repositories. Sibling checkouts (`../repo-x`) and mono-repo members (no
+  `url`, tracked by the central repository) are not touched.
+
+`/speckit.multi-repo.workspace` fills `url` for you: scaffolding and audit
+read each member's `origin` remote — only when the member path is the top
+of its own git repository, never for mono-repo subdirectories — and
+`multi-repo-check` reports it as `suggested_url` for members without `url`.
 
 > **Naming tip**: member ids may be full repository names (e.g.
 > `itau-nm8-lambda-integracao`) — the task file then defaults to
@@ -521,8 +563,14 @@ Configuration mistakes (no integration, unknown integration, missing
 constitution file) still abort in both modes — `skip` covers local absence,
 not manifest errors.
 
+**`specify workflow run multi-repo-bootstrap`** — clones the members
+missing locally from their manifest `url` (see
+[Bootstrapping a fresh checkout](#bootstrapping-a-fresh-checkout--url));
+`-i dry_run=true` previews. It runs the orchestrator step in `bootstrap`
+mode and dispatches nothing.
+
 **`/speckit.multi-repo.workspace`** — agent command for the central repo,
-with two modes:
+with three modes:
 
 - *Scaffold* (no manifest yet): scans sibling directories and
   subdirectories of the repo root (two levels deep, for mono-repos) for Spec
@@ -533,7 +581,11 @@ with two modes:
   graph empty with a warning
 - *Audit* (manifest exists): per-member readiness table, drift detection
   (undeclared Spec Kit projects), and confirmed additions only — existing
-  entries and their dependencies are never modified
+  entries and their dependencies are never modified, except that a missing
+  `url` is filled from the member's `origin` remote after confirmation
+- *Bootstrap* (`bootstrap`, or "configure the workspace" after cloning only
+  the central repo): previews and runs `multi-repo-bootstrap`, then reports
+  members still missing a `url` or not initialized
 
 **`/speckit.multi-repo.domain`** — agent command for the central repo that
 fills the manifest's domain view (`domain`, `communicates_with`) from

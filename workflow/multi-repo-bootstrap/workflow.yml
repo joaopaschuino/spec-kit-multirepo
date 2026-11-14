@@ -1,0 +1,22 @@
+schema_version: "1.0"
+workflow:
+  id: "multi-repo-bootstrap"
+  name: "Multi-Repo Workspace Bootstrap"
+  version: "0.7.2"
+  author: "Joao Victor"
+  description: "Clone the workspace members missing locally from their manifest url, and git-ignore member clones inside the central repository — dispatches nothing"
+
+requires:
+  speckit_version: ">=1.1.0"
+
+inputs:
+  dry_run:
+    type: string
+    required: false
+    prompt: "Set to true to report what would be cloned without cloning anything"
+
+steps:
+  - id: bootstrap
+    type: multi-repo-implement
+    bootstrap: true
+    dry_run: "{{ inputs.dry_run }}"
